@@ -1,0 +1,28 @@
+{
+  "name": "portal",
+  "owner": {
+    "name": "Wael Fouda",
+    "email": "wael.fouda.wf@gmail.com"
+  },
+  "metadata": {
+    "description": "One-click install of the management-portal MCP operator for Claude Code — the MCP server plus the full agent discipline (skill, portal-operator subagent, /portal command, read-after-write hooks)."
+  },
+  "plugins": [
+    {
+      "name": "management-portal",
+      "source": "./management-portal",
+      "description": "Operate the management-portal MCP with the full agent discipline — the core loop, the three gates (read-after-write, completeness, task-breakdown), bottom-up completion, never-fabricate-ids, and board-first. Bundles the MCP server, the management-portal skill, the portal-operator subagent, the /portal command, and the read-after-write hooks. On install you are prompted once for your API key (stored in your OS keychain).",
+      "version": "1.0.0",
+      "author": {
+        "name": "Wael Fouda"
+      },
+      "homepage": "https://github.com/WaelFouda/management-portal-plugin",
+      "keywords": [
+        "mcp",
+        "management-portal",
+        "agent-discipline",
+        "project-management"
+      ]
+    }
+  ]
+}
