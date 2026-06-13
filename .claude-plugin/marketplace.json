@@ -11,8 +11,8 @@
     {
       "name": "management-portal",
       "source": "./management-portal",
-      "description": "Operate the management-portal MCP with the full agent discipline — the core loop, the three gates (read-after-write, completeness, task-breakdown), bottom-up completion, never-fabricate-ids, and board-first. Bundles the MCP server, the management-portal skill, the portal-operator subagent, the /portal command, and the read-after-write hooks. Set your API key in the MCP_API_KEY environment variable; the server reads it at connect time.",
-      "version": "1.0.1",
+      "description": "Operate the management-portal MCP with the full agent discipline — the core loop, the three gates (read-after-write, completeness, task-breakdown), bottom-up completion, never-fabricate-ids, and board-first. Bundles the MCP server, the management-portal skill, the portal-operator subagent, the /portal command, and the read-after-write hooks. On Claude Code Desktop you are prompted for your API key on install (stored in the OS keychain) — no terminal needed.",
+      "version": "1.0.2",
       "author": {
         "name": "Wael Fouda"
       },

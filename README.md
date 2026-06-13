@@ -4,27 +4,19 @@ One-click install of the **management-portal MCP operator** for [Claude Code](ht
 It connects the management-portal MCP **and** ships the agent discipline that makes an agent use it
 correctly — in a single install.
 
-## Install
+## Install (Claude Code Desktop — no terminal)
 
-**1. Set your API key as an environment variable** (once) — your `pfk_live_…` key from the web app
-→ **Settings → API Keys**:
+1. **Create your API key** in the web app → **Settings → API Keys → Generate**, and copy it.
+2. **Add this marketplace** — Claude Code Plugins panel → *Add marketplace*, or run:
+   `/plugin marketplace add WaelFouda/management-portal-plugin`
+3. **Install** — find **management-portal** in the marketplace and click *Install*, or run:
+   `/plugin install management-portal@portal`
+4. **Paste your API key when Claude Code prompts you** (`pfk_live_…`). It's stored in your OS keychain — never written to disk or committed.
+5. **Reload** (`/reload-plugins`) or restart Claude Code → `/mcp` confirms it's connected, `/portal` is ready.
 
-```text
-# Windows (PowerShell):   setx MCP_API_KEY "pfk_live_your_key_here"
-# macOS / Linux:          export MCP_API_KEY="pfk_live_your_key_here"   (add to ~/.zshrc or ~/.bashrc)
-```
-
-**2. Add the marketplace and install** (in Claude Code):
-
-```text
-/plugin marketplace add WaelFouda/management-portal-plugin
-/plugin install management-portal@portal
-```
-
-The MCP server reads `MCP_API_KEY` from your environment at connect time and sends it as the
-`X-API-Key` header — the key is **never** written to disk or committed. Environment-variable auth works
-on **every** install path (CLI or the `/plugin` UI); an interactive key prompt only fires in the UI, so
-the env var is the robust, universal approach.
+> **Headless / CLI (no `/plugin` UI):** the key prompt only fires in the Desktop/UI flow. For terminal-only
+> or CI installs, use the standalone server —
+> `claude mcp add --transport http management-portal https://client-management-api-1uk1.onrender.com/mcp --header "X-API-Key: <YOUR_KEY>"` — or the file-copy bundles under `agent-onboarding/bundles/`.
 
 > ⚠️ **Restart after installing.** The skill, the `portal-operator` subagent, the `/portal` command, and
 > the hooks register only at session start. Start a fresh Claude Code session (or `/reload-plugins` and
