@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/modelcontextprotocol/specification/main/schema/vscode-mcp.json",
+  "servers": {
+    "management-portal": {
+      "type": "http",
+      "url": "https://client-management-api-1uk1.onrender.com/mcp",
+      "headers": {
+        "X-API-Key": "<YOUR_MCP_API_KEY>"
+      }
+    }
+  }
+}

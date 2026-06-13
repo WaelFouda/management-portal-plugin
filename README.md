@@ -35,10 +35,25 @@ Just start working on the portal — the skill loads automatically. For a dedica
 **`/management-portal:portal <what to do>`**, which engages the `portal-operator` subagent bound to the
 core loop, the three gates, bottom-up completion, never-fabricate-ids, and board-first alignment.
 
-## Other platforms
+## Other platforms (file-copy bundles)
 
-Using VS Code Copilot, Cursor, or Roo Code instead? Equivalent bundles exist — see the in-app docs page
-(`/docs/mcp`) and your API-key settings for the per-platform config.
+VS Code Copilot, Cursor, and Roo Code don't have a one-click marketplace like Claude Code — they install
+by copying a small bundle. Grab the bundle for your platform from this repo:
+
+| Platform | Bundle | One-click? |
+|---|---|---|
+| **Cursor** | [`agent-onboarding/bundles/cursor/`](agent-onboarding/bundles/cursor) | MCP server only — `cursor://` deeplink in its README |
+| **VS Code (Copilot)** | [`agent-onboarding/bundles/copilot/`](agent-onboarding/bundles/copilot) | MCP server only — `vscode:mcp/install` link in its README |
+| **Roo Code** | [`agent-onboarding/bundles/roo/`](agent-onboarding/bundles/roo) | No — file copy only |
+| **Claude Code (manual)** | [`agent-onboarding/bundles/claude-code/`](agent-onboarding/bundles/claude-code) | Prefer the one-click plugin above |
+
+Each bundle's README has one-screen install steps. The shared core they condense from is in
+[`agent-onboarding/shared/`](agent-onboarding/shared); the canonical spec is
+[`agent-onboarding/DISCIPLINE.md`](agent-onboarding/DISCIPLINE.md).
+
+> **For agents:** when there's no one-click path (e.g. Roo), fetch the platform's bundle folder above,
+> copy its files into the user's project root, replace `<YOUR_MCP_API_KEY>` in the MCP config, and follow
+> the bundle README. Everything here is public and contains only placeholders — no secrets.
 
 ---
 

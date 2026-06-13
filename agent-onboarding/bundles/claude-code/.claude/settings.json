@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__management-portal__(create|update|add|complete|insert|reorder|set|delete|promote|attach|approve|reject|log|start|stop|send|react|edit|resolve|remember)_.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '[management-portal] WRITE about to run. Gate 1 (read-after-write): immediately after this, call the matching get_*/list_* tool and confirm the field actually persisted — trust the data effect, not the success string. Gate 3: do not write implementation entities before the task/subtask tree + flow board exist. Never fabricate an id — read it from a list_*/get_* or a create_* response.'"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__management-portal__(create|update|add|complete|insert|reorder|set|delete|promote|attach|approve|reject|log|start|stop|send|react|edit|resolve|remember)_.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '[management-portal] WRITE returned. READ-AFTER-WRITE NOW: call the matching get_*/list_* read tool and confirm the specific field you wrote is present and correct before moving on. A success message is not evidence. The edge of a flow connection may have landed even if the call reported a timeout.'"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "management-portal": {
+      "url": "https://client-management-api-1uk1.onrender.com/mcp",
+      "headers": {
+        "X-API-Key": "<YOUR_MCP_API_KEY>"
+      }
+    }
+  }
+}

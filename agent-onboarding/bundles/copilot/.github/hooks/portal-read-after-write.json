@@ -1,0 +1,30 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/schemas/hooks.json",
+  "description": "Reinforces Gate 1 (read-after-write) and Gate 3 (read-before-write / never-fabricate-ids) for the management-portal MCP. Fires around management-portal write tools to remind the agent to ground in reads and verify by reading the record back.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__management-portal__(create_|update_|add_|delete_|complete_|insert_|send_|log_|start_|stop_|approve_|reject_|promote_|attach_|reorder_|set_block_parent|remember).*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '[portal-discipline] About to WRITE to the management-portal. Gate 3: every id must come from a list_*/get_* read or a create_* response — never fabricated. Ground in what the portal actually contains before writing.' 1>&2",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__management-portal__(create_|update_|add_|delete_|complete_|insert_|send_|log_|start_|stop_|approve_|reject_|promote_|attach_|reorder_|set_block_parent|remember).*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '[portal-discipline] Gate 1 read-after-write: call the matching get_*/list_* tool now and confirm the specific field persisted. Trust the data effect, not the success string or a stale schema (e.g. create_flow_connection -> list_flow_connections; the edge may land even on a reported timeout).' 1>&2",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

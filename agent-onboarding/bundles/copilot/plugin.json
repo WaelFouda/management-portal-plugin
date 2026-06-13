@@ -1,0 +1,41 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/schemas/plugin.json",
+  "name": "management-portal-copilot",
+  "displayName": "Management-Portal Operator (VS Code GitHub Copilot)",
+  "version": "1.0.0",
+  "description": "Installable VS Code GitHub Copilot bundle that wraps the shared management-portal agent discipline: operating contract, the management-portal skill, the portal-operator custom agent, the /portal prompt, a read-after-write hook, and the management-portal MCP registration.",
+  "author": {
+    "name": "WaelFouda"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "management-portal",
+    "mcp",
+    "github-copilot",
+    "vscode",
+    "agent-onboarding",
+    "freelancer-workspace"
+  ],
+  "source": "agent-onboarding/DISCIPLINE.md",
+  "canonicalVersion": "1.0.0",
+  "instructions": ".github/copilot-instructions.md",
+  "skills": [
+    "./.github/skills/management-portal/SKILL.md"
+  ],
+  "agents": [
+    "./.github/agents/portal-operator.agent.md"
+  ],
+  "prompts": [
+    "./.github/prompts/portal.prompt.md"
+  ],
+  "hooks": "./.github/hooks/portal-read-after-write.json",
+  "mcpServers": {
+    "management-portal": {
+      "type": "http",
+      "url": "https://client-management-api-1uk1.onrender.com/mcp",
+      "headers": {
+        "X-API-Key": "<YOUR_MCP_API_KEY>"
+      }
+    }
+  }
+}
