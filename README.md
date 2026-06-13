@@ -6,14 +6,25 @@ correctly — in a single install.
 
 ## Install
 
+**1. Set your API key as an environment variable** (once) — your `pfk_live_…` key from the web app
+→ **Settings → API Keys**:
+
+```text
+# Windows (PowerShell):   setx MCP_API_KEY "pfk_live_your_key_here"
+# macOS / Linux:          export MCP_API_KEY="pfk_live_your_key_here"   (add to ~/.zshrc or ~/.bashrc)
+```
+
+**2. Add the marketplace and install** (in Claude Code):
+
 ```text
 /plugin marketplace add WaelFouda/management-portal-plugin
 /plugin install management-portal@portal
 ```
 
-On install you're **prompted once for your Management Portal API key** (`pfk_live_…`, from the web app
-→ **Settings → API Keys**). It's stored securely in your OS keychain and injected into the MCP server's
-`X-API-Key` header at runtime — it is **never** written to disk or committed.
+The MCP server reads `MCP_API_KEY` from your environment at connect time and sends it as the
+`X-API-Key` header — the key is **never** written to disk or committed. Environment-variable auth works
+on **every** install path (CLI or the `/plugin` UI); an interactive key prompt only fires in the UI, so
+the env var is the robust, universal approach.
 
 > ⚠️ **Restart after installing.** The skill, the `portal-operator` subagent, the `/portal` command, and
 > the hooks register only at session start. Start a fresh Claude Code session (or `/reload-plugins` and

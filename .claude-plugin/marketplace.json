@@ -11,8 +11,8 @@
     {
       "name": "management-portal",
       "source": "./management-portal",
-      "description": "Operate the management-portal MCP with the full agent discipline — the core loop, the three gates (read-after-write, completeness, task-breakdown), bottom-up completion, never-fabricate-ids, and board-first. Bundles the MCP server, the management-portal skill, the portal-operator subagent, the /portal command, and the read-after-write hooks. On install you are prompted once for your API key (stored in your OS keychain).",
-      "version": "1.0.0",
+      "description": "Operate the management-portal MCP with the full agent discipline — the core loop, the three gates (read-after-write, completeness, task-breakdown), bottom-up completion, never-fabricate-ids, and board-first. Bundles the MCP server, the management-portal skill, the portal-operator subagent, the /portal command, and the read-after-write hooks. Set your API key in the MCP_API_KEY environment variable; the server reads it at connect time.",
+      "version": "1.0.1",
       "author": {
         "name": "Wael Fouda"
       },

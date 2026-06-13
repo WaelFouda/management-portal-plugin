@@ -1,6 +1,6 @@
 {
   "name": "management-portal",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Operate the management-portal MCP with the full agent discipline in one install — the management-portal skill, the portal-operator subagent, the /portal command, read-after-write hooks, and the MCP server itself.",
   "author": {
     "name": "Wael Fouda",
@@ -15,13 +15,5 @@
     "agent-discipline",
     "portal"
   ],
-  "mcpServers": "./.mcp.json",
-  "userConfig": {
-    "mcp_api_key": {
-      "type": "string",
-      "title": "Management Portal API Key",
-      "description": "Your management-portal API key (pfk_live_…) from the web app → Settings → API Keys. Stored securely in your OS keychain — never written to disk or committed.",
-      "sensitive": true
-    }
-  }
+  "mcpServers": "./.mcp.json"
 }
