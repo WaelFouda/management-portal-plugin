@@ -1,0 +1,8 @@
+# The hook scripts are executed on Windows and macOS from the same checkout.
+# This repo is configured with core.autocrlf=true, so without this rule a Windows
+# checkout would rewrite these files with CRLF. That is harmless while they are
+# invoked as `node "<path>"`, but it silently breaks the `#!/usr/bin/env node`
+# shebang the moment anyone runs one directly. Pin them to LF so both platforms
+# get byte-identical files.
+*.js text eol=lf
+*.json text eol=lf

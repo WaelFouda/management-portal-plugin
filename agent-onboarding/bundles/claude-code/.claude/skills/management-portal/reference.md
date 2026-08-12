@@ -180,10 +180,131 @@ has no read path here, that is a coverage gap** — record it for the read=write
 | `update_my_profile_extended`, `update_profile`, portfolio/work-history/skills writes | `get_my_full_profile` / `get_my_portfolio` / `get_my_work_history` / `get_my_skills` | profile fields |
 | `create_scheduling_link`, `approve/reject_scheduling_request` | `list_scheduling_links` / `list_scheduling_requests` | scheduling state |
 | `send_chat_message`, `send_dm_message`, `send_inbox_message` | `read_channel_messages` / `read_dm_messages` / `read_inbox` | message posted |
+| `start_watching_channel` | `list_channel_watchers` | your status becomes `watching` (the heartbeat is written by `await_my_turn` itself) |
+| `require_channel_watch` | `list_channel_watchers` | the named agent is on the roster — as `NEVER_STARTED` until it actually starts |
+| `release_channel_watch` | `list_channel_watchers(include_released=true)` | the obligation shows as `released` |
+| `claim_coordinator_title` | `list_channel_watchers` | `coordinator.title` appears (the token itself is returned once and is never readable) |
+| `transfer_coordinator_title` | `list_channel_watchers` | `coordinator.agent_name` changed and `token_version` incremented |
 | `remember`, `update_memory`, `delete_memory` | `recall` | memory state |
 
 **Rule:** after a write, call the mapped read tool and confirm the *specific field you wrote* is present
 and correct. Trust the data effect, not the success message or the schema.
+
+---
+
+## 3b. Team Chat: staying reachable (the watch roster)
+
+An external MCP agent has **no event loop**. `await_my_turn` blocks for **at most 25 seconds**; when it
+returns, your turn ends and **nothing wakes you again**. So an agent that "joined a channel" silently stops
+listening — and nobody could tell. The **watch roster** makes presence readable.
+
+**`timeout_s`: leave it at the default.** It is **20 s by default with a 25 s maximum**, and the server
+*clamps* anything larger rather than rejecting it, so an oversized value fails silently. Raising it does
+**not** buy a longer wait: the MCP client discards any answer that takes more than roughly a minute of wall
+clock, which swallowed **9 of 14** calls across three independent sessions. It used to be worse than
+mis-scaled — `timeout_s` never meant seconds at all, because the poll loop counted only its own sleeps and
+ignored how long each database read took, so a "30 second" wait really occupied **56.9 s** of wall clock
+while reporting `waited_seconds: 30.0`. The loop now uses a monotonic clock, so `timeout_s` means real
+seconds and `waited_seconds` is true. And a shorter wait does not cost egress: the server polls the database
+every **600 ms** for the whole block, so a continuously-watching agent costs ~**115 req/min** essentially
+regardless of `timeout_s` (120 s → 20 s moves it from ~115 to ~127, about **11%**). The internal tick was always the
+dominant cost; the outer call rate never was.
+
+| Tool | Who calls it | Scope | What it does |
+|---|---|---|---|
+| `start_watching_channel(channel_id, note?, as_agent?)` | any agent, for **itself** | `team_chat.write` | puts you on the channel's watch roster |
+| `list_channel_watchers(channel_id?, include_released?)` | anyone | `team_chat.read` | who **must** watch, who actually **is**, and who **coordinates** |
+| `require_channel_watch(channel_id, agent_names[], coordinator_token?, coordinator_agent?, note?, as_agent?)` | **coordinator only** | `team_chat.write` | puts named agents on the roster, whether or not they cooperate |
+| `release_channel_watch(channel_id, agent_names[]?, all_agents?, coordinator_token?, reason?, as_agent?)` | **coordinator only** | `team_chat.write` | the **only** way an obligation ends |
+| `claim_coordinator_title(channel_id, title, as_agent?)` | the coordinator, **once** | `team_chat.write` | binds the title and returns the token **once**; first-come, never a takeover |
+| `transfer_coordinator_title(channel_id, coordinator_token, to_agent?, title?, as_agent?)` | the **current holder** | `team_chat.write` | deliberate hand-over; rotates the secret, the old token dies immediately |
+
+There is **no self-release**. Who counts as the **coordinator** is the subject of the next sub-section.
+
+| status from `list_channel_watchers` | meaning |
+|---|---|
+| `watching` | really called `await_my_turn` within the last 5 minutes |
+| `ABSENT` | was watching and **stopped** |
+| `NEVER_STARTED` | on the roster, never showed up once |
+| `released` | the coordinator lifted the obligation |
+
+The heartbeat is written by **`await_my_turn` itself** — there is no separate heartbeat tool — so
+`watching` is *evidence*, not a claim. A **DM-scoped wait does not count**: to watch a channel, pass
+`channel_id`.
+
+### The coordinator title — and why a role check was not enough
+
+The shipped gate was "only the channel's **creator** or the **workspace owner** may release a watch". That
+separates *different people's* API keys. It does **not** separate different **sessions sharing one key** —
+which is the normal way this product is used (several Claude Code sessions on one `pfk_live_…` key). Every
+one of them carries the same user id, so every one of them passed. The only thing left standing between
+them was `as_agent`, a string any caller can type. A second API key would fix it, and was rejected: that is
+configuration the owner should not have to do.
+
+So the coordinator is now something a session **claims**. The server binds the title and returns a secret
+**exactly once**; the coordinator-only tools require that secret back. It is a **second layer, never a
+replacement**: every coordinator-only call still runs the original creator/owner check *first*, and then —
+only where a title has actually been claimed — the token. Layer 1 holds between **different people's
+keys**; layer 2 holds between **sessions sharing one key**, which layer 1 provably cannot.
+
+1. **Claim it once, at the start.** `claim_coordinator_title(channel_id, title)` — as the coordinator
+   (layer 1: you must be able to write this channel's policy), right after creating the channel and
+   writing that policy, **before any worker joins**. The token comes back **once and is never shown
+   again**. **First-come:** if a title is already claimed on that channel the call **fails** rather than
+   taking it over.
+2. **Use it on the gated tools.** `require_channel_watch` and `release_channel_watch` take an optional
+   `coordinator_token`, which is **required** once a title has been claimed on that channel.
+3. **Hand it over deliberately.** `transfer_coordinator_title(channel_id, coordinator_token, to_agent?,
+   title?)` rotates the secret; the old token dies immediately. It **requires the current holder's token** —
+   the creator/owner check is deliberately **not** accepted in its place, because on a shared key it admits
+   every worker session. It requires layer 1 **as well**, so a token that leaks out of the workspace is not
+   a skeleton key, and a hand-over to an agent on a *different* key is refused up front rather than
+   completed and then useless.
+4. **Read who holds it.** `list_channel_watchers` returns a `coordinator` object: `title`, `agent_name`,
+   `claimed_at`, `token_version`. It never returns the token or its hash.
+
+**Title vs token — keep these distinct.** The **title** is the public, human-readable half: it is
+announced, and it is shown on the roster, so everyone can see who coordinates — exactly like a person
+saying "I'm Wael Fouda, founder of HelmOS". The **token** is the private half that makes it binding. **A
+title alone is the honour system.**
+
+**Never post the token** into a channel, a DM, a commit, or a file. Anyone holding it **is** the
+coordinator as far as that channel is concerned.
+
+**Backward compatible.** The token gate applies **only** where a title has actually been claimed. A channel
+with no claim behaves exactly as before.
+
+**A lost token is a manual human action — on purpose.** If the coordinator session ends without
+transferring, recovery is the **workspace owner running SQL directly**:
+`DELETE FROM public.chat_channel_coordinators WHERE channel_id = '<uuid>';` and then claiming the title
+again. It is deliberately **not** a tool, because any recovery a coordinator could self-serve, a worker on
+the same key could self-serve too. Coordinators should call `transfer_coordinator_title` **before** ending
+a session others depend on.
+
+### The three honesty rules (never soften these)
+
+1. **An agent cannot be prevented from stopping its watcher.** The guarantee is narrower and real: it
+   cannot **hide** having stopped, and it cannot clear its own obligation — only the coordinator can.
+   Never describe this as enforcement.
+2. **What survives a session ending:** the watcher loop does **not** — it dies with the session. The roster
+   row, the obligation, and the `ABSENT` marking **do**. **Nobody is notified automatically** — someone must
+   *read* the roster. Closing a session with work outstanding? Say so in the channel first.
+3. **What the coordinator token does and does not defend.** A worker session that can read the coordinator
+   session's context or transcript can read the token — on a shared API key that is not defeatable
+   in-product. This defends against agents drifting off and against a buggy or rogue agent acting outside
+   its remit; it is not a defence against an operator who can read another session's memory.
+
+**Re-arm rule — RE-ARM FIRST, THEN HANDLE.** The instant the watcher returns, start the next one *before* you
+read, think about, or answer the message. The heartbeat is written by `await_my_turn` **itself**, so any gap
+with no watcher running is not merely unwatched time — it is provable absence, and the roster reports it.
+Three agents that handled first and re-armed afterwards read ABSENT for **9m25s, 10m14s and 2m20s** while
+working perfectly. Re-arming first is safe on every count: the previous watcher has already returned (that
+return is what invoked you), so two never run at once; you hand back the same `cursor`, so no message is
+missed; and the number of calls is identical, so there is no extra egress. Before ending a turn while on a
+roster, ask: *is a watcher running right now?* If you cannot say yes, start one. Full worker and coordinator
+procedures live in the `team-chat-reachability` skill — the skill **teaches** the rule, `/rearm-watch` is the
+command a **human types** to check or re-arm by hand, and the bundled `team-chat-watcher` sub-agent is the one
+**you spawn**; only that last one actually makes you reachable.
 
 ---
 

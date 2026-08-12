@@ -76,13 +76,46 @@ As the **MCP agent** (Copilot), **you** reason over read-tool output and write c
 via the primitive tools. **No DeepSeek** — that's only for server-side app buttons (e.g. Generate
 Tasks). The in-app AI Chat / Thoth likewise self-extract.
 
+## Team Chat: staying reachable (what will and will not tell you)
+
+`await_my_turn` blocks for **at most 25 s** (`timeout_s` defaults to 20 and the server clamps anything
+higher). When it returns your turn ends and **nothing wakes you again**. So a channel keeps a **watch
+roster**: `start_watching_channel(channel_id)` enrols you, `list_channel_watchers(channel_id)` shows who
+is actually present, and the coordinator holds `require_channel_watch` / `release_channel_watch` — release
+is the only way an obligation ends, there is no self-release. Statuses: `watching` (really waited within
+the last 5 min), `ABSENT` (watched, then stopped), `NEVER_STARTED`, `released`. The heartbeat is written
+by `await_my_turn` **itself**, so `watching` is evidence, not a claim; a DM-scoped wait does **not** count,
+and nothing else — no hook, no script, no assertion that you re-armed — may write one.
+
+**Re-arm FIRST, then handle.** The instant the wait returns, start the next one *before* you read or
+answer the message. Handling first marks you `ABSENT` for exactly as long as handling takes — three agents
+lost 9m25s, 10m14s and 2m20s that way. Re-arming first is safe: the previous wait has already returned, so
+two never run at once; the cursor is unchanged, so nothing is missed; and the call count is identical, so
+there is no extra egress.
+
+**What is not at risk: no message is ever lost.** `await_my_turn` resumes from its cursor and hands you
+everything that arrived while you were not looking. Stopping costs **time, not mail** — this is a latency
+problem, not a delivery problem.
+
+**What is at risk: nobody notices.** On Claude Code a turn-end `Stop` hook reads the roster and says so
+when an agent has stopped watching. **Copilot has no `Stop` equivalent** — `.github/hooks/*.json` supports
+`PreToolUse` and `PostToolUse` only — so **no alarm will interrupt you here.** What you do get is
+`.github/hooks/portal-watch-rearm.json`, a static reminder that fires as `await_my_turn` returns; it
+narrows the window in which you forget to re-arm, but it fires only while you are still calling the tool,
+and the failure case is an agent that has stopped calling it. When you go `ABSENT`, nothing in this
+harness notices. Therefore: **read `list_channel_watchers(channel_id)` yourself** instead of assuming you
+are still on the roster, and know that the remaining backstop is a person — the human or the coordinator
+reading the roster. Per-adapter matrix and limits: `agent-onboarding/WATCH-LAYERS.md`.
+
 ## How this is wired for Copilot
 
 - **Operating contract** — this file (`.github/copilot-instructions.md`).
 - **Skill** — `.github/skills/management-portal/SKILL.md` (+ `reference.md`); load on any portal work.
 - **Custom agent** — `.github/agents/portal-operator.agent.md`; the portal operator, MCP tools scoped.
 - **Prompt** — `.github/prompts/portal.prompt.md` (`/portal`); engages the portal-operator agent.
-- **Hook** — `.github/hooks/portal-read-after-write.json`; reinforces read-after-write (Gate 1).
+- **Hooks** — `.github/hooks/portal-read-after-write.json` reinforces read-after-write (Gate 1);
+  `.github/hooks/portal-watch-rearm.json` fires as `await_my_turn` returns and tells you to re-arm.
+  **`PreToolUse` / `PostToolUse` only** — there is no `Stop` event here, so no turn-end watch gate.
 - **MCP connection** — `.vscode/mcp.json` (server `management-portal`; `X-API-Key`).
 - **Plugin** — `plugin.json` bundles the above for distribution.
 

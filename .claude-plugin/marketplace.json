@@ -5,14 +5,14 @@
     "email": "wael.fouda.wf@gmail.com"
   },
   "metadata": {
-    "description": "One-click install of the management-portal MCP operator for Claude Code — the MCP server plus the full agent discipline (skill, portal-operator subagent, /portal command, read-after-write hooks)."
+    "description": "One-click install of the management-portal MCP operator for Claude Code — the MCP server plus the full agent discipline (skills, portal-operator subagent, /portal and /rearm-watch commands, read-after-write hooks)."
   },
   "plugins": [
     {
       "name": "management-portal",
       "source": "./management-portal",
-      "description": "Operate the management-portal MCP with the full agent discipline — the core loop, the three gates (read-after-write, completeness, task-breakdown), bottom-up completion, never-fabricate-ids, and board-first. Bundles the MCP server, the management-portal skill, the portal-operator subagent, the /portal command, and the read-after-write hooks. On Claude Code Desktop you are prompted for your API key on install (stored in the OS keychain) — no terminal needed.",
-      "version": "1.0.2",
+      "description": "Operate the management-portal MCP with the full agent discipline — the core loop, the three gates (read-after-write, completeness, task-breakdown), bottom-up completion, never-fabricate-ids, and board-first. Bundles the MCP server, the management-portal skill, the team-chat-reachability skill and its team-chat-watcher sub-agent (an agent that joins a Team Chat channel keeps watching it instead of going deaf after one poll, and a coordinator can claim a titled, token-backed role that workers on the same API key cannot impersonate), the portal-operator subagent, the /portal and /rearm-watch commands, and the read-after-write hooks. On Claude Code Desktop you are prompted for your API key on install (stored in the OS keychain) — no terminal needed.",
+      "version": "1.3.0",
       "author": {
         "name": "Wael Fouda"
       },

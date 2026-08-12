@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/schemas/hooks.json",
+  "description": "Keeps a Copilot agent reachable on a Team Chat channel. Copilot supports PreToolUse/PostToolUse hooks only - it has NO turn-end (Stop) event - so this cannot be the automatic ABSENT alarm that the Claude Code bundle gets. What it can do is fire on the way out of every await_my_turn, which is exactly the moment the re-arm decision is made and exactly the moment it was forgotten. The message is deliberately STATIC: with no Stop event there is nothing to hang a roster lookup on, and a static reminder needs no script, no key and no network.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "mcp__management-portal__await_my_turn",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '[watch-alarm] await_my_turn just RETURNED, so you are no longer waiting and nobody can reach you. Re-arm now: call await_my_turn again with the cursor it just gave you, before you do anything else with what it returned. Your heartbeat on the watch roster is written by that call actually running - nothing else, and no claim that you re-armed, makes you reachable. No message has been lost: the cursor replays everything you missed. What you lose by not re-arming is time.' 1>&2",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
