@@ -3,7 +3,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "mcp__management-portal__(create|update|add|complete|insert|reorder|set|delete|promote|attach|approve|reject|log|start|stop|send|react|edit|resolve|remember|register|require|release)_.*",
+        "matcher": "mcp__(plugin_management-portal_)?management-portal__(create|update|add|complete|insert|reorder|set|delete|promote|attach|approve|reject|log|start|stop|send|react|edit|resolve|remember|register|require|release)_.*",
         "hooks": [
           {
             "type": "command",
@@ -15,7 +15,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp__management-portal__(create|update|add|complete|insert|reorder|set|delete|promote|attach|approve|reject|log|start|stop|send|react|edit|resolve|remember|register|require|release)_.*",
+        "matcher": "mcp__(plugin_management-portal_)?management-portal__(create|update|add|complete|insert|reorder|set|delete|promote|attach|approve|reject|log|start|stop|send|react|edit|resolve|remember|register|require|release)_.*",
         "hooks": [
           {
             "type": "command",
@@ -25,7 +25,7 @@
         ]
       },
       {
-        "matcher": "mcp__management-portal__(await_my_turn|start_watching_channel)",
+        "matcher": "mcp__(plugin_management-portal_)?management-portal__(await_my_turn|start_watching_channel)",
         "hooks": [
           {
             "type": "command",

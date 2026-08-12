@@ -68,6 +68,36 @@ Desktop.
 Then verify: run `/mcp` to confirm the `management-portal` server is **connected** and its tools are
 listed, and `/plugin list` to confirm the plugin is enabled.
 
+## The tool-name prefix depends on which install path you took
+
+**Read this before you write a hook matcher, an agent `tools:` list, or any doc that spells a tool name
+out in full.** The two install paths above do **not** produce the same tool names.
+
+| Install path | Server registers as | Tools appear as |
+|---|---|---|
+| **Plugin** (`/plugin install`) | `plugin:management-portal:management-portal` | `mcp__plugin_management-portal_management-portal__create_task` |
+| **Manual** (`claude mcp add`, hand-written `.mcp.json`, the file-copy bundle) | `management-portal` | `mcp__management-portal__create_task` |
+
+Claude Code scopes a server that a **plugin** provides to `plugin:<plugin>:<server>`, and the tool name is
+that scoped id with the colons turned into underscores. Because this plugin's name and its server's name
+are both `management-portal`, the segment is doubled — which looks like a typo and is not.
+
+**So bind to both, never to one.** Everything this plugin ships that names a tool in full accepts both
+spellings: the hook matchers make the plugin segment an optional regex group
+(`mcp__(plugin_management-portal_)?management-portal__…`), and the `portal-operator` and
+`team-chat-watcher` `tools:` lists spell out both forms for every tool.
+
+**Why the agents do not just use a wildcard.** `tools:` does accept `mcp__<server>__*`, but both agents
+hold a deliberately *narrowed* tool set — `portal-operator` has every `create_*`/`update_*` and **no**
+`delete_*`; `team-chat-watcher` has seven read-only tools and cannot speak, release or claim a title. A
+server wildcard would hand back exactly the tools those lists exist to withhold. The duplication is the
+price of least privilege; **do not "clean it up".**
+
+**How this failed silently.** Bare-only matchers do not error on a plugin install — they simply never
+match, so the read-after-write gates never fire and the watcher/operator resolve **zero** tools. It went
+unnoticed for as long as it did because every manual registration uses the bare name, and that is what
+testing used.
+
 ## Use
 
 - Just work on the portal — the **`management-portal` skill** auto-triggers and loads the discipline.

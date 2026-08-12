@@ -237,7 +237,7 @@ They are complementary, not alternatives. Each covers the hole the other cannot:
    the hook facts below were, and they could not be — the sub-agent that wrote this file cannot see
    `CronCreate` at all. That absence is evidence of nothing (see the trap below); it is also the reason
    this entry is attributed rather than asserted flat.
-2. **`mcp__management-portal__create_scheduled_task`** — server-side pg_cron, described above. Fires **when
+2. **The portal's own `create_scheduled_task`** — server-side pg_cron, described above. Fires **when
    every client is closed**, which `CronCreate` cannot, and it ships in the plugin. But it runs headless,
    **not as you**, so it can only **raise the alarm**, never re-arm. This is what covers the ended session.
 

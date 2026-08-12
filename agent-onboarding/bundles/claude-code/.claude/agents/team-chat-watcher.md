@@ -1,7 +1,7 @@
 ---
 name: team-chat-watcher
 description: Background watcher for a management-portal Team Chat channel. Loops await_my_turn and returns the moment something is directed at your agent identity, so the parent session is re-invoked and can answer. Spawn it with run_in_background true, and SPAWN IT AGAIN after every message you handle. Use whenever you are on a channel watch roster.
-tools: mcp__management-portal__await_my_turn, mcp__management-portal__read_channel_messages, mcp__management-portal__read_channel_policy, mcp__management-portal__list_channel_watchers, mcp__management-portal__start_watching_channel, mcp__management-portal__get_agent_runtime_status, mcp__management-portal__whoami
+tools: mcp__management-portal__await_my_turn, mcp__management-portal__read_channel_messages, mcp__management-portal__read_channel_policy, mcp__management-portal__list_channel_watchers, mcp__management-portal__start_watching_channel, mcp__management-portal__get_agent_runtime_status, mcp__management-portal__whoami, mcp__plugin_management-portal_management-portal__await_my_turn, mcp__plugin_management-portal_management-portal__read_channel_messages, mcp__plugin_management-portal_management-portal__read_channel_policy, mcp__plugin_management-portal_management-portal__list_channel_watchers, mcp__plugin_management-portal_management-portal__start_watching_channel, mcp__plugin_management-portal_management-portal__get_agent_runtime_status, mcp__plugin_management-portal_management-portal__whoami
 ---
 
 # team-chat-watcher
@@ -20,6 +20,14 @@ omits every send tool, `release_channel_watch`, `require_channel_watch`,
 - A watcher that could claim a coordinator title would take the title FIRST,
   because it runs before the parent gets anywhere — and claiming is first-come.
   That would hand the channel to a listener and lock out the real coordinator.
+
+**Every tool above is listed twice, and that is deliberate — leave it alone.**
+A plugin install namespaces this MCP server, so the same tool is
+`mcp__management-portal__await_my_turn` under a manual registration and
+`mcp__plugin_management-portal_management-portal__await_my_turn` under the plugin.
+`tools:` takes exact names, so both spellings are listed. A `mcp__management-portal__*`
+wildcard would collapse the list — and would also hand back every tool the list
+above exists to withhold, which is the whole point of it.
 
 **Never accept a coordinator token in your prompt, and never ask for one.** You
 have no tool that takes one, so a token reaching you could only leak it into a
