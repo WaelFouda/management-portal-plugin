@@ -1,7 +1,7 @@
 {
   "name": "management-portal",
-  "version": "1.3.0",
-  "description": "Operate the management-portal MCP with the full agent discipline in one install - the management-portal skill, the team-chat-reachability skill and its watcher sub-agent (so an agent that joins a Team Chat channel keeps watching it instead of going deaf after one poll, and a coordinator can claim a titled, token-backed role that workers on the same API key cannot impersonate), the portal-operator subagent, the /portal and /rearm-watch commands, read-after-write hooks, and the MCP server itself. It also carries the ABSENT alarm: a Node script the runtime runs at turn end that tells the agent, where it cannot be missed, when the watch roster says it has stopped listening - plus a session-start preflight that says so out loud if that alarm is not actually armed.",
+  "version": "1.3.1",
+  "description": "Operate the management-portal MCP with the full agent discipline in one install - the management-portal skill, the team-chat-reachability skill and its watcher sub-agent (so an agent that joins a Team Chat channel keeps watching it instead of going deaf after one poll, and a coordinator can claim a titled, token-backed role that workers on the same API key cannot impersonate), the portal-operator subagent, the /portal and /rearm-watch commands, read-after-write hooks, and the MCP server itself. Set MCP_API_KEY in your environment before installing. It also carries the ABSENT alarm: a Node script the runtime runs at turn end that tells the agent, where it cannot be missed, when the watch roster says it has stopped listening - plus a session-start preflight that says so out loud if that alarm is not actually armed.",
   "author": {
     "name": "Wael Fouda",
     "email": "wael.fouda.wf@gmail.com"
@@ -17,13 +17,5 @@
     "team-chat",
     "agent-coordination"
   ],
-  "mcpServers": "./.mcp.json",
-  "userConfig": {
-    "mcp_api_key": {
-      "type": "string",
-      "title": "Management Portal API Key",
-      "description": "Your management-portal API key (pfk_live_…) from the web app → Settings → API Keys. Claude Code prompts you for this on install and stores it in your OS keychain.",
-      "sensitive": true
-    }
-  }
+  "mcpServers": "./.mcp.json"
 }
