@@ -4,7 +4,7 @@
       "type": "http",
       "url": "https://client-management-api-1uk1.onrender.com/mcp",
       "headers": {
-        "X-API-Key": "${MCP_API_KEY}"
+        "X-API-Key": "${user_config.mcp_api_key}"
       }
     }
   }
