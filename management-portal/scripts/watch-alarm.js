@@ -52,6 +52,29 @@
  * server, and the server remains the sole authority on status.
  *
  * The only network call is a READ: list_channel_watchers.
+ *
+ * ==========================================================================
+ * AND IT CANNOT ALWAYS MAKE THAT READ. THAT IS THE SECOND RULE.
+ * ==========================================================================
+ * Nothing hands a hook a credential. This script finds one anyway — including
+ * on an OAuth install, where it reads its own token out of Claude Code's
+ * credential store — but that source is an internal file with no compatibility
+ * promise, so having a credential is a convenience and never an assumption. See
+ * the Credentials section for what was measured. The alarm therefore has two
+ * halves, and only one of them needs the network:
+ *
+ *   SUSPECT  is local. `record` mode notes every await_my_turn this machine
+ *            really made; when the newest one goes stale, something is wrong.
+ *            Costs nothing, needs no credential, and is measured evidence about
+ *            THIS machine's own behaviour.
+ *   CONFIRM  is the roster read. It needs a credential, and it is the only
+ *            thing that can turn a suspicion into a fact about the server.
+ *
+ * The gate — `decision: block` — is spent only on a CONFIRMED roster row. When
+ * the script cannot confirm, it reports the local evidence, says in as many
+ * words that it does not know, and lets the turn end. An alarm that gated on an
+ * unconfirmed guess would be forging a verdict, which is the same sin as forging
+ * a heartbeat pointed the other way.
  */
 
 'use strict';
@@ -61,6 +84,7 @@ const os = require('os');
 const path = require('path');
 const https = require('https');
 const http = require('http');
+const crypto = require('crypto');
 
 // ---------------------------------------------------------------------------
 // Tunables
@@ -89,6 +113,13 @@ const MIN_CHECK_INTERVAL_S = 30;
 
 // Failures are loud, but not once-per-turn loud.
 const FAILURE_NOTICE_INTERVAL_S = 600;
+
+// A credential the server has REFUSED will be refused again. Measured: a revoked
+// key sat in the environment and this script spent one request per turn on it,
+// seven turns in a row, every one a 401. A refusal is not flakiness and must not
+// be retried on the flakiness schedule, so the exact credential that was refused
+// is stood down for this long. A DIFFERENT credential is tried immediately.
+const CREDENTIAL_RETRY_S = 60 * 60;
 
 // Forget stale bookkeeping so the state file cannot grow without bound.
 const ENTRY_TTL_S = 24 * 60 * 60;
@@ -155,21 +186,77 @@ function normPath(p) {
 // ---------------------------------------------------------------------------
 // Credentials
 //
-// The key is NEVER embedded in any file this plugin ships, and this script never
-// writes it anywhere or prints it. Resolution order, first hit wins:
-//   1. CLAUDE_PLUGIN_OPTION_MCP_API_KEY — the plugin's own userConfig value,
-//      handed to the hook process as an environment variable.
-//   2. MCP_API_KEY / PORTAL_API_KEY — what agent-onboarding/shared/mcp.config.md
-//      already tells every adapter to use.
-//   3. The user's OWN existing MCP client config, which they wrote themselves.
-//      We read it; we never create or modify it.
+// WHAT A HOOK CAN REACH, AND WHAT IT CANNOT. Measured on this runtime, because
+// guessing here is how the alarm ended up returning 401 seven turns in a row.
+//
+// This script is a SEPARATE PROCESS. It does not share the session's MCP
+// connection, and NOTHING IS HANDED TO IT:
+//   * The environment Claude Code gives a hook carries CLAUDE_PROJECT_DIR,
+//     CLAUDE_PLUGIN_ROOT and CLAUDE_PLUGIN_DATA. None of them is a credential.
+//   * The Stop event JSON on stdin describes the session (session_id,
+//     transcript_path, cwd, stop_hook_active, …). It has no field for MCP
+//     servers, their auth state, or a token.
+//   * There is no `claude mcp …` subcommand that emits a bearer token, and no
+//     documented hook-side API for one.
+//
+// So there is no SUPPORTED channel. There is, however, an observable one: Claude
+// Code writes MCP OAuth tokens to ~/.claude/.credentials.json in plaintext, and
+// this script reads ITS OWN entry out of that file — see credFromHostOAuthStore
+// below for the rules it holds itself to and for why the obvious reading of that
+// file ("every accessToken is empty") is wrong. That path is the difference
+// between a working alarm and an inert one on an OAuth install.
+//
+// IT IS ALSO NOT GUARANTEED. It is an internal file with no compatibility
+// promise, the token can be expired, and the owner can switch the path off. So
+// the resolution below is allowed to come back EMPTY, and everything downstream
+// is built to stay useful when it does: report the local evidence, say plainly
+// that the roster could not be read, and never gate on a guess. Never "fix" an
+// empty result by telling the owner to go back to an API key they deliberately
+// stopped using.
+//
+// Both credential families the server accepts are supported
+// (backend/routers/mcp_server.py -> resolve_mcp_credential):
+//   * a platform API key    -> `X-API-Key: pfk_live_…`
+//   * an OAuth access token -> `Authorization: Bearer …`
+//
+// Candidates are collected best-first by credentialCandidates(). Explicit
+// operator configuration outranks anything inferred, because it is an
+// instruction rather than a guess:
+//   1. environment — the OAuth names first, then the API-key names.
+//   2. the user's OWN existing MCP client config, in either header form. We read
+//      it; we never create or modify it.
+//   3. this plugin's own OAuth entry in Claude Code's credential store.
+// A candidate the server REFUSES is stood down and the next one is tried on the
+// following turn. The credential is never embedded in any file this plugin
+// ships, and this script never prints, logs or writes one.
 // ---------------------------------------------------------------------------
 
-function keyFromEnv() {
-  const names = ['CLAUDE_PLUGIN_OPTION_MCP_API_KEY', 'MCP_API_KEY', 'PORTAL_API_KEY'];
-  for (const n of names) {
-    const v = process.env[n];
-    if (v && v.trim().startsWith('pfk_live_')) return { key: v.trim(), source: n };
+// The server's own discriminator (mcp_inbound_oauth.looks_like_oauth_bearer):
+// platform keys are `pfk_live_…`, and anything else is offered to the OAuth
+// verifier. Mirroring it here stops the two ends disagreeing about which header
+// a given string belongs in.
+const API_KEY_PREFIX = 'pfk_live_';
+
+const BEARER_ENV_NAMES = [
+  'CLAUDE_PLUGIN_OPTION_MCP_OAUTH_TOKEN', 'MCP_OAUTH_TOKEN', 'PORTAL_OAUTH_TOKEN',
+];
+const API_KEY_ENV_NAMES = [
+  'CLAUDE_PLUGIN_OPTION_MCP_API_KEY', 'MCP_API_KEY', 'PORTAL_API_KEY',
+];
+
+/** A token that is really an unexpanded `${VAR}` is not a token. */
+function isPlaceholder(v) { return !v || v.includes('${'); }
+
+function credFromEnv() {
+  for (const n of BEARER_ENV_NAMES) {
+    const v = String(process.env[n] || '').trim().replace(/^Bearer\s+/i, '');
+    if (!isPlaceholder(v) && !v.startsWith(API_KEY_PREFIX)) {
+      return { kind: 'bearer', value: v, source: n };
+    }
+  }
+  for (const n of API_KEY_ENV_NAMES) {
+    const v = String(process.env[n] || '').trim();
+    if (v.startsWith(API_KEY_PREFIX)) return { kind: 'api_key', value: v, source: n };
   }
   return null;
 }
@@ -178,12 +265,25 @@ function pickServer(servers) {
   if (!servers || typeof servers !== 'object') return null;
   const entry = servers['management-portal'];
   if (!entry || !entry.headers) return null;
-  const key = entry.headers['X-API-Key'] || entry.headers['x-api-key'];
-  if (!key || !String(key).startsWith('pfk_live_')) return null; // skip ${...} placeholders
-  return { key: String(key), url: entry.url || DEFAULT_MCP_URL };
+  const headers = entry.headers;
+  const url = entry.url || DEFAULT_MCP_URL;
+
+  const key = headers['X-API-Key'] || headers['x-api-key'];
+  if (key && String(key).startsWith(API_KEY_PREFIX)) {
+    return { kind: 'api_key', value: String(key), url };
+  }
+  // An OAuth-era config may carry the token in an Authorization header instead.
+  const auth = String(headers.Authorization || headers.authorization || '').trim();
+  const bearer = /^Bearer\s+(.+)$/i.exec(auth);
+  if (bearer) {
+    const token = bearer[1].trim();
+    if (token.startsWith(API_KEY_PREFIX)) return { kind: 'api_key', value: token, url };
+    if (!isPlaceholder(token)) return { kind: 'bearer', value: token, url };
+  }
+  return null;
 }
 
-function keyFromClientConfig() {
+function credFromClientConfig() {
   const candidates = [];
   const home = os.homedir();
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
@@ -211,12 +311,121 @@ function keyFromClientConfig() {
   return null;
 }
 
-function resolveCredentials() {
-  const env = keyFromEnv();
-  if (env) return { key: env.key, url: process.env.PORTAL_MCP_URL || DEFAULT_MCP_URL, source: env.source };
-  const cfg = keyFromClientConfig();
-  if (cfg) return { key: cfg.key, url: process.env.PORTAL_MCP_URL || cfg.url, source: cfg.source };
-  return null;
+/** Trailing slash and case are not identity. Used to match one resource, exactly. */
+function sameResource(u) {
+  return String(u || '').trim().replace(/\/+$/, '').toLowerCase();
+}
+
+/**
+ * THE OAUTH PATH: this plugin's OWN access token, where the host already keeps it.
+ *
+ * Measured on Claude Code 2.1.227/2.1.231 (Windows): MCP OAuth tokens are written to
+ * `~/.claude/.credentials.json` under `mcpOAuth`, in plaintext. A `windows-credman`
+ * backend exists in the binary but is dark-launched behind a feature flag and, even
+ * when enabled, falls back to this same file. macOS/Linux use the same file.
+ *
+ * WHY THE FILE "LOOKS EMPTY", which cost real time before it was understood: the store
+ * accumulates ONE ENTRY PER AUTHORIZATION and never prunes the old ones. Measured here:
+ * 20 entries, 19 with `accessToken: ""`, four of them for this very server — three husks
+ * and one live. Reading the first match, or eyeballing the file, yields "every token is
+ * empty" and that reading is WRONG. The live entry is found only by filtering on a
+ * FUTURE `expiresAt`, which is what the loop below does.
+ *
+ * THE RULES THIS READ HOLDS ITSELF TO, because a plugin rummaging in its host's
+ * credential store is a thing that needs limits rather than cleverness:
+ *   * OUR RESOURCE ONLY. An entry is considered only when its `serverUrl` is the MCP
+ *     endpoint this script is about to call. This plugin's token, for this plugin's
+ *     server, to make one read-only call as the identity the session already uses.
+ *     Every other entry in that file — sixteen Anthropic connectors, github, figma —
+ *     is never looked at, never parsed for value, never sent anywhere.
+ *   * ACCESS TOKEN ONLY, NEVER THE REFRESH TOKEN. Refreshing would mint credentials and
+ *     rotate the host's state — a WRITE against somebody else's store, from a hook, to
+ *     raise an alarm. Not worth it and not ours to do. An expired token simply means we
+ *     have nothing this turn; the session refreshes it in its own time and the next turn
+ *     picks the new one up.
+ *   * NEVER WRITTEN, NEVER PRINTED, NEVER LOGGED. It exists in memory for one request.
+ *   * UNDOCUMENTED, THEREFORE UNTRUSTED. This is an internal file of the host
+ *     application with no compatibility promise. Every field is treated as hostile,
+ *     nothing throws, and a shape this code does not recognise degrades to "no
+ *     credential" — which is a fully supported state with its own honest message. The
+ *     alarm must never go silent because a format changed underneath it.
+ *   * SWITCHABLE OFF. `PORTAL_ALARM_NO_CREDENTIAL_FILE=1` disables this path entirely
+ *     for anyone who would rather the alarm stay inert than have a hook read that file.
+ */
+function credFromHostOAuthStore(wantUrl) {
+  if (process.env.PORTAL_ALARM_NO_CREDENTIAL_FILE === '1') return null;
+
+  let store;
+  try {
+    const file = path.join(os.homedir(), '.claude', '.credentials.json');
+    store = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (_) { return null; }
+
+  const entries = store && store.mcpOAuth;
+  if (!entries || typeof entries !== 'object') return null;
+
+  const want = sameResource(wantUrl);
+  // Never hand over a token that would expire mid-flight.
+  const floor = Date.now() + NET_TIMEOUT_MS + 30_000;
+
+  let best = null;
+  for (const entry of Object.values(entries)) {
+    if (!entry || typeof entry !== 'object') continue;
+    if (sameResource(entry.serverUrl) !== want) continue;
+    const token = typeof entry.accessToken === 'string' ? entry.accessToken.trim() : '';
+    if (!token || token.startsWith(API_KEY_PREFIX)) continue;
+    // A missing expiry is a husk, not a token with an unknown life. Require a real one.
+    const exp = Number(entry.expiresAt);
+    if (!Number.isFinite(exp) || exp <= floor) continue;
+    if (!best || exp > best.exp) best = { exp, token };
+  }
+  if (!best) return null;
+
+  return {
+    kind: 'bearer',
+    value: best.token,
+    url: wantUrl,
+    // A label, never the credential.
+    source: "Claude Code's own OAuth entry for this server",
+  };
+}
+
+/**
+ * Every credential this machine can offer, best first.
+ *
+ * A LIST rather than a single answer, because the two can disagree and the machine
+ * this was fixed on is the proof: a revoked `MCP_API_KEY` sat in the environment
+ * while a perfectly good OAuth token sat in the host's store, and returning only the
+ * first hit meant the alarm 401'd for seven turns beside a credential that worked.
+ * Explicit operator configuration still wins — it is an instruction, not a guess —
+ * but a candidate the server has REFUSED is stood down and the next one gets its turn.
+ */
+function credentialCandidates() {
+  const url = process.env.PORTAL_MCP_URL || DEFAULT_MCP_URL;
+  const out = [];
+  const env = credFromEnv();
+  if (env) out.push({ ...env, url });
+  const cfg = credFromClientConfig();
+  if (cfg) out.push({ ...cfg, url: process.env.PORTAL_MCP_URL || cfg.url });
+  const host = credFromHostOAuthStore(url);
+  if (host) out.push(host);
+  return out;
+}
+
+/**
+ * A truncated SHA-256 of a credential — never the credential.
+ *
+ * This is written to the local state file so a REFUSED credential can be stood down
+ * without standing down credentials in general, and so a freshly-rotated OAuth token
+ * is recognised as a different one and tried at once. It has to survive landing in a
+ * plaintext file on disk, so it is a one-way digest and it is truncated: the same
+ * construction, and the same reasoning, as the backend's own bearer cache keys.
+ */
+function credFingerprint(cred) {
+  return crypto.createHash('sha256')
+    .update(`${cred.kind}:${cred.value}`)
+    .digest('hex')
+    .slice(0, 12);
 }
 
 // ---------------------------------------------------------------------------
@@ -247,7 +456,11 @@ function callListWatchers(creds, channelId) {
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json',
-          'X-API-Key': creds.key,
+          // The server takes either family and resolves both to the same identity
+          // (backend/routers/mcp_server.py -> resolve_mcp_credential).
+          ...(creds.kind === 'bearer'
+            ? { Authorization: `Bearer ${creds.value}` }
+            : { 'X-API-Key': creds.value }),
           'Content-Length': Buffer.byteLength(body),
         },
         timeout: NET_TIMEOUT_MS,
@@ -257,6 +470,12 @@ function callListWatchers(creds, channelId) {
         res.setEncoding('utf8');
         res.on('data', (c) => { data += c; });
         res.on('end', () => {
+          // A REFUSAL is not a flaky network. It will be refused again in thirty
+          // seconds and in thirty minutes, so it is reported on sight and the
+          // credential is stood down rather than retried on the flakiness schedule.
+          if (res.statusCode === 401 || res.statusCode === 403) {
+            return resolve({ error: `http_${res.statusCode}`, refused: true });
+          }
           if (res.statusCode !== 200) return resolve({ error: `http_${res.statusCode}` });
           try {
             const env = JSON.parse(data);
@@ -439,6 +658,75 @@ async function modeRecord() {
 // Mode: check  (Stop)
 // ---------------------------------------------------------------------------
 
+/**
+ * What this machine saw by itself, with no server and no credential involved.
+ *
+ * Every line is an observation about THIS process's own bookkeeping — "no
+ * await_my_turn was recorded leaving here for N seconds" — and never a claim about
+ * what the server thinks. That distinction is the whole reason this text exists
+ * separately from the roster text below.
+ */
+function describeLocalEvidence(suspects, now) {
+  return suspects.map((w) => {
+    const age = Math.max(0, now - (w.lastCallAt || 0));
+    const who = w.agentName ? `"${w.agentName}"` : 'this session (no agent name was recorded)';
+    return `  - ${who} on channel ${w.channelId}: no await_my_turn call has been observed `
+      + `leaving this machine for ${age}s.`;
+  }).join('\n');
+}
+
+/**
+ * THE HONEST DEGRADED PATH — the one that runs when the roster cannot be read.
+ *
+ * It reports local evidence, states plainly that it is not a verdict, and does NOT
+ * gate. Its one job is to be impossible to mistake for "you are fine": the old
+ * version of this said only that the alarm was inert, which was true and useless —
+ * it named no channel, no agent and no elapsed time, so there was nothing to act on.
+ *
+ * The way out is the point. This hook cannot authenticate, but the AGENT READING
+ * THIS CAN: the session's own MCP connection is working, so `list_channel_watchers`
+ * is one tool call away. The alarm hands the verification to the only party in the
+ * room that can perform it.
+ */
+function reportUnverified(state, now, evidence, why, detail) {
+  if (now - (state.lastFailureNoticeAt || 0) <= FAILURE_NOTICE_INTERVAL_S) return stayQuiet();
+  state.lastFailureNoticeAt = now;
+  writeState(state);
+
+  const cause = {
+    absent:
+      'It has no credential to check with. If you signed in with OAuth, that is the NORMAL '
+      + 'state and there is nothing to fix: this hook is a separate process from your '
+      + 'session, it does not share your MCP connection, and Claude Code gives a hook no '
+      + 'supported way to borrow it. Do not paste an API key on account of this message.',
+    refused:
+      'The credential it found was REFUSED by the server (401/403) — revoked, expired or '
+      + 'meant for somewhere else. It has stopped retrying that one, rather than spend a '
+      + 'request every turn on a credential that will not start working.',
+    flaky:
+      'The roster read keeps failing, so this is a network or backend problem rather than a '
+      + 'credential one.',
+  }[why];
+
+  return speak(
+    'THE ABSENT ALARM COULD NOT READ THE WATCH ROSTER — SO IT IS NOT TELLING YOU THAT YOU '
+    + 'ARE FINE. IT DOES NOT KNOW.\n'
+    + cause + (detail ? ` (${detail})` : '') + '\n\n'
+    + 'What this machine did observe by itself, which needs no credential:\n'
+    + evidence + '\n'
+    + '  (The server marks a watcher ABSENT after 300s with no heartbeat, and only '
+    + 'await_my_turn actually arriving writes one.)\n\n'
+    + 'That is evidence about calls leaving this machine. It is NOT the roster: it cannot '
+    + 'prove you are absent, and it cannot prove you are present.\n\n'
+    + 'YOU can settle it in one call, because your session is authenticated even though this '
+    + 'hook is not. Run list_channel_watchers now and read your own row. If it says ABSENT or '
+    + 'NEVER_STARTED, spawn the team-chat-watcher sub-agent in the background for that exact '
+    + 'channel_id and agent name — or run /rearm-watch with no arguments and let it work them '
+    + 'out. No message has been lost either way; what you are losing is the time until '
+    + 'somebody can reach you.'
+  );
+}
+
 async function modeCheck() {
   const raw = await readStdin();
   let payload = {};
@@ -488,49 +776,63 @@ async function modeCheck() {
   const suspect = watches.filter((w) => (now - (w.lastCallAt || 0)) > LOCAL_STALE_S);
   if (suspect.length === 0) return stayQuiet();
 
-  // Egress guard.
-  if (now - (state.lastCheckAt || 0) < MIN_CHECK_INTERVAL_S) return stayQuiet();
+  // Everything from here is a claim about the SERVER, so from here it can fail. The
+  // local evidence is gathered first precisely because it cannot.
+  const evidence = describeLocalEvidence(suspect, now);
 
-  const creds = resolveCredentials();
-  if (!creds) {
-    if (now - (state.lastFailureNoticeAt || 0) > FAILURE_NOTICE_INTERVAL_S) {
-      state.lastFailureNoticeAt = now;
-      writeState(state);
-      return speak(
-        '[watch-alarm] The ABSENT alarm cannot check the roster: no management-portal '
-        + 'API key found. It looked at CLAUDE_PLUGIN_OPTION_MCP_API_KEY, MCP_API_KEY, '
-        + 'PORTAL_API_KEY, and your MCP client config. Until this is fixed the alarm is '
-        + 'INERT — it will not tell you when a watcher goes ABSENT. Verify your watch '
-        + 'yourself with list_channel_watchers.'
-      );
-    }
-    return stayQuiet();
+  // Pick the best credential that is not currently stood down. A refusal stands down
+  // exactly the credential that was refused — by fingerprint, so an OAuth token that
+  // has since rotated counts as a new one and is tried immediately.
+  const refused = state.refusedCred || null;
+  const stillStoodDown = (fp) => Boolean(refused)
+    && refused.fp === fp
+    && (now - (refused.at || 0)) < CREDENTIAL_RETRY_S;
+
+  const candidates = credentialCandidates();
+  let creds = null;
+  for (const c of candidates) {
+    const fp = credFingerprint(c);
+    if (stillStoodDown(fp)) continue;
+    creds = { ...c, fp };
+    break;
   }
+
+  if (!creds) {
+    // Either nothing was found at all, or the only thing found is a known-bad one.
+    return reportUnverified(state, now, evidence, candidates.length ? 'refused' : 'absent');
+  }
+
+  // Egress guard. Only the network path is rate limited: the messages above and below
+  // cost nothing and must not be silenced by a budget that exists for requests.
+  if (now - (state.lastCheckAt || 0) < MIN_CHECK_INTERVAL_S) return stayQuiet();
 
   state.lastCheckAt = now;
   writeState(state);
 
   // One read covering every roster in the workspace.
-  const { payload: roster, error } = await callListWatchers(creds, null);
+  const { payload: roster, error, refused: wasRefused } = await callListWatchers(creds, null);
 
   if (error) {
-    state.consecutiveFailures = (state.consecutiveFailures || 0) + 1;
-    const persistent = state.consecutiveFailures >= FAILURES_BEFORE_NOTICE;
-    const dueAgain = now - (state.lastFailureNoticeAt || 0) > FAILURE_NOTICE_INTERVAL_S;
-    if (persistent && dueAgain) {
-      state.lastFailureNoticeAt = now;
+    if (wasRefused) {
+      // Stand this credential down and say so at once. Waiting for three tries would
+      // mean three turns of silence about a credential that is never coming back.
+      state.refusedCred = { fp: creds.fp, at: now };
+      state.consecutiveFailures = 0;
       writeState(state);
-      return speak(
-        `[watch-alarm] The ABSENT alarm could not read the watch roster `
-        + `(${error}, ${state.consecutiveFailures} tries in a row). It is NOT telling you `
-        + 'that you are fine — it does not know. Check with list_channel_watchers, and '
-        + 're-arm if you have stopped watching.'
+      return reportUnverified(state, now, evidence, 'refused', `${error}, from ${creds.source}`);
+    }
+    state.consecutiveFailures = (state.consecutiveFailures || 0) + 1;
+    if (state.consecutiveFailures >= FAILURES_BEFORE_NOTICE) {
+      writeState(state);
+      return reportUnverified(
+        state, now, evidence, 'flaky', `${error}, ${state.consecutiveFailures} tries in a row`
       );
     }
     writeState(state);
     return stayQuiet();
   }
   state.consecutiveFailures = 0;
+  delete state.refusedCred;
   writeState(state);
 
   const rows = (roster && roster.watchers) || [];

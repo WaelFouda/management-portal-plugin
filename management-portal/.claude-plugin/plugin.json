@@ -1,6 +1,6 @@
 {
   "name": "management-portal",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Operate the management-portal MCP with the full agent discipline in one install. You sign in with OAuth on first use - no API key to paste, copy or store. Bundles the MCP server, the management-portal skill, the team-chat-reachability skill and its watcher sub-agent, the portal-operator subagent, the /portal and /rearm-watch commands, read-after-write hooks, and a Stop hook that arms the ABSENT alarm on install.",
   "author": {
     "name": "Wael Fouda",
@@ -17,13 +17,5 @@
     "team-chat",
     "agent-coordination"
   ],
-  "mcpServers": "./.mcp.json",
-  "userConfig": {
-    "mcp_api_key": {
-      "type": "string",
-      "title": "Management Portal API Key",
-      "description": "Your key (pfk_live_...) from the web app -> Settings -> API Keys. Claude Code Desktop prompts on install; if it does not, use Configure options on the plugin. OAuth is coming - this key path is what works today.",
-      "sensitive": true
-    }
-  }
+  "mcpServers": "./.mcp.json"
 }

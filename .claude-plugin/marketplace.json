@@ -12,7 +12,7 @@
       "name": "management-portal",
       "source": "./management-portal",
       "description": "Operate the management-portal MCP with the full agent discipline - the core loop, the three gates (read-after-write, completeness, task-breakdown), bottom-up completion, never-fabricate-ids, and board-first. Sign in with OAuth on first use; no API key to paste or store. Bundles the MCP server, the management-portal skill, the team-chat-reachability skill and its team-chat-watcher sub-agent, the portal-operator subagent, the /portal and /rearm-watch commands, and the read-after-write hooks.",
-      "version": "1.4.2",
+      "version": "1.4.3",
       "author": {
         "name": "Wael Fouda"
       },

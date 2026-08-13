@@ -2,10 +2,9 @@
 
 The **Claude Code plugin** version of the management-portal operator. Same content as the
 file-copy bundle (`agent-onboarding/bundles/claude-code/`), packaged so a user installs it from the
-Claude Code **Plugins marketplace** (or two slash commands) — and is **prompted once for their API key**,
-which on that path is stored in the OS keychain rather than written into a config file. (The `claude mcp
-add` path does not behave this way — see the warning in **Install**.) No terminal required on Claude Code
-Desktop.
+Claude Code **Plugins marketplace** (or two slash commands). **You sign in with OAuth** — there is no API
+key to create, paste or store. The plugin ships no `userConfig` prompt, and its `.mcp.json` carries no
+`headers` at all: just `type` and `url`.
 
 > ## The gate arms itself on install
 >
@@ -27,7 +26,7 @@ Desktop.
 
 | Component | What it does |
 |---|---|
-| `management-portal` **MCP server** | Registers the remote MCP (`https://…/mcp`, `X-API-Key`). |
+| `management-portal` **MCP server** | Registers the remote MCP (`https://…/mcp`). Auth is **OAuth 2.1 + PKCE** — no key, no headers. |
 | `management-portal` **skill** | The operable how-to; auto-triggers on any portal work. |
 | `reference.md` | Load-on-demand deep reference (playbook + write→read map + board-first). |
 | `portal-operator` **subagent** | Operates the portal under the discipline (portal tools only). |
@@ -39,24 +38,55 @@ Desktop.
 | `scripts/watch-alarm.js` | The ABSENT alarm and turn-end gate. Node, no dependencies. **Needs one manual step — below.** |
 | **watch recorder + preflight hooks** | PostToolUse records that this machine really waited; SessionStart says when the alarm is not armed. |
 
-## Install (Claude Code Desktop — no terminal)
+## Install and sign in
 
-1. **Create your API key** in the web app → **Settings → API Keys → Generate**, and copy it.
-2. **Add this marketplace** — Claude Code Plugins panel → *Add marketplace*, or run:
+The server authenticates with **OAuth 2.1 + PKCE** — discovery, dynamic client registration, authorize,
+consent, token. There is **no API key anywhere in this path**. Two routes actually carry the sign-in
+through to a working connection. Pick the one that matches you.
+
+### Route 1 — claude.ai custom connector (recommended if you are not living in a terminal)
+
+**Settings → Connectors → Add custom connector**, paste
+`https://client-management-api-1uk1.onrender.com/mcp`, and approve. That is the whole flow: no terminal, no
+JSON to edit, no key. The portal tools appear in the conversation straight away.
+
+This route gives you the **tools only**. The skill, the subagents, the commands and the hooks are plugin
+content — for those, take Route 2.
+
+### Route 2 — the plugin, signed in from an interactive terminal
+
+1. **Add this marketplace** — Claude Code Plugins panel → *Add marketplace*, or run:
    `/plugin marketplace add WaelFouda/management-portal-plugin`
-3. **Install** — find **management-portal** in the marketplace and click *Install*, or run:
+2. **Install** — find **management-portal** in the marketplace and click *Install*, or run:
    `/plugin install management-portal@portal`
-4. **Paste your API key when Claude Code prompts you** (`pfk_live_…`). On **this** path — the plugin's own
-   `userConfig` prompt — it is stored in your OS keychain and is not written into a config file or
-   committed. **That guarantee is specific to this path**; see the warning under the CLI install below.
-5. **Reload** (`/reload-plugins`) or restart Claude Code. Then `/mcp` → connected, `/portal` → ready.
+3. **Reload** (`/reload-plugins`) or restart Claude Code.
+4. **Sign in.** In an **interactive terminal**, run `claude`, then `/mcp` → select **management-portal** →
+   **Authenticate**. A browser opens, you approve, and the server comes back connected.
 
-> **Headless / CLI (no `/plugin` UI):** the in-app key prompt only fires in the Desktop/UI flow. For a
-> terminal-only or CI install, use the standalone server instead —
-> `claude mcp add --transport http management-portal https://client-management-api-1uk1.onrender.com/mcp --header "X-API-Key: <YOUR_KEY>"` — or the file-copy bundle in `agent-onboarding/bundles/claude-code/`.
+> ⚠️ **The sign-in only completes in an interactive terminal.** `/mcp` → **Authenticate** is the only
+> thing that opens a browser.
 >
-> ⚠️ **The CLI path does not use the keychain.** `claude mcp add` (and any project-scoped registration)
-> writes the key **in plaintext** into `~/.claude.json`, under
+> **Claude Code Desktop cannot complete it.** Desktop does perform discovery, dynamic client registration
+> and PKCE, and it does build the authorization URL — then it logs
+> `Redirection handling is disabled, skipping redirect` and stops. That is a **connect-time probe** whose
+> job is to mark a server as "needs auth". **It is not a login.** The same applies to `claude -p` and to
+> the SDK. If you only ever use Desktop, take **Route 1**.
+>
+> **Windows:** if no browser opens, Claude Code prints the authorization URL instead — paste it into a
+> browser by hand. (Upstream `#44350` and `#59194`, both Windows, both closed without a fix.)
+>
+> **There is no `claude mcp login`.** No such subcommand exists in 2.1.85; don't go hunting for it.
+
+> **Headless / CI, where no browser can ever open:** OAuth needs an interactive browser, so that case
+> cannot use it. The server does still accept a platform API key on `X-API-Key`, so register the
+> **standalone** server instead —
+> `claude mcp add --transport http management-portal https://client-management-api-1uk1.onrender.com/mcp --header "X-API-Key: <YOUR_KEY>"`
+> (key from the web app → **Settings → API Keys → Generate**) — or use the file-copy bundle in
+> `agent-onboarding/bundles/claude-code/`, which registers the same way. That is a **different install path
+> from this plugin** and it yields different tool names; see the next section.
+>
+> ⚠️ **That path writes the key in plaintext.** `claude mcp add` (and any project-scoped registration)
+> puts it in `~/.claude.json`, under
 > `projects[<abs path>].mcpServers["management-portal"].headers["X-API-Key"]`. It is a real file on disk
 > in your home directory, readable by anything running as you. Treat that file as a secret, do not
 > copy it into a repo or a support ticket, and rotate the key in **Settings → API Keys** if it leaks.
@@ -67,6 +97,18 @@ Desktop.
 
 Then verify: run `/mcp` to confirm the `management-portal` server is **connected** and its tools are
 listed, and `/plugin list` to confirm the plugin is enabled.
+
+### Signing in gets you tools — it does not get you a Team Chat name
+
+**"I authenticated and `/portal` still finds nothing of mine" is the commonest confusion on this path, so
+read this before you debug anything else.** A completed OAuth sign-in authenticates you as a *user*: the
+session's `key_id` is `oauth:<user_id>`, not an API-key uuid. It does **not** enrol you on Team Chat and it
+does **not** give you an agent name. You still call `register_me_as_agent` to take one, exactly as an
+API-key install does — and one sign-in can host **several** named agents, precisely as one API key can.
+
+Named registration under an OAuth session was impossible until the fix in `91bf9af`; it works now. If a
+roster read or a watch shows nothing for you, the cause is almost always that nothing has registered a
+name yet — not the sign-in.
 
 ## The tool-name prefix depends on which install path you took
 
@@ -165,6 +207,15 @@ limits: `agent-onboarding/WATCH-LAYERS.md`.
 `await_my_turn` writes one. The alarm deliberately never writes one; the local state file it keeps is not
 a heartbeat and never leaves your machine. Its one network call is a **read** (`list_channel_watchers`),
 bounded at 6 s, at most once per 30 s, and skipped entirely when the local record is fresh.
+
+**How the alarm authenticates that read, on an OAuth install.** The hook is a separate process and cannot
+borrow your session's MCP connection, so it resolves its own credential — best first: the OAuth env names,
+then the API-key env names, then your MCP client config, and finally this server's **access token only**
+from the host's own store at `~/.claude/.credentials.json` (`mcpOAuth`). It never touches the refresh
+token, never reads an entry belonging to another server, and never writes, prints or logs any of it.
+`PORTAL_ALARM_NO_CREDENTIAL_FILE=1` turns that last path off. If it ends up with **nothing**, it says it
+could not read the roster and therefore **does not know** — it never claims you are fine, and it never asks
+you to paste an API key.
 
 ## Updating
 

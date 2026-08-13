@@ -44,12 +44,19 @@ is fixed" — never to "where did the message go".
    actually armed, so a bundle cannot degrade to instructions-only in silence. It never edits your
    configuration; it only tells you.
 5. **The script** — `watch-alarm.js`, Node, no dependencies, so one implementation serves
-   Windows and macOS. It never embeds a key: it resolves one from
-   `CLAUDE_PLUGIN_OPTION_MCP_API_KEY`, then `MCP_API_KEY` / `PORTAL_API_KEY`, then your own existing MCP
+   Windows and macOS. It never embeds a credential. It accepts **both** families the server takes —
+   a platform API key as `X-API-Key`, or an **OAuth access token as `Authorization: Bearer`** — and
+   resolves candidates best-first: the environment
+   (`CLAUDE_PLUGIN_OPTION_MCP_OAUTH_TOKEN` / `MCP_OAUTH_TOKEN` / `PORTAL_OAUTH_TOKEN`, then
+   `CLAUDE_PLUGIN_OPTION_MCP_API_KEY` / `MCP_API_KEY` / `PORTAL_API_KEY`), then your own existing MCP
    client config (`~/.claude.json`, `.mcp.json`, `.vscode/mcp.json`, `.cursor/mcp.json`,
-   `.roo/mcp.json`), and it never writes or prints the key. Its one network call is a **read**: a raw
-   JSON-RPC `POST /mcp` calling `list_channel_watchers`, bounded at 6 s, rate limited to once per 30 s,
-   and skipped entirely when the local record is fresh — this project runs near a 5 GB/month egress cap.
+   `.roo/mcp.json`, either header form), then **this plugin's own OAuth entry in Claude Code's
+   credential store** — see "The alarm under OAuth" below. It never writes or prints a credential.
+   Its one network call is a **read**: a raw JSON-RPC `POST /mcp` calling `list_channel_watchers`,
+   bounded at 6 s, rate limited to once per 30 s, and skipped entirely when the local record is
+   fresh — this project runs near a 5 GB/month egress cap. A **401/403 is a refusal, not flakiness**:
+   that exact credential is stood down for an hour and the next candidate is tried on the following
+   turn, so a revoked key cannot produce one failed request per turn indefinitely.
 6. **The idle keepalive** — **two** recurring schedulers, both armed at the join moment alongside the
    watcher: `CronCreate` (in-session, runs as you, so it can re-arm) and the portal's
    `create_scheduled_task` (server-side, runs headless, so it can only raise the alarm). Every hook above
@@ -372,6 +379,42 @@ Measured on **Claude Code 2.1.222**, Windows, headless `-p` with `--plugin-dir`.
    in facts 1–5 has not been re-run on macOS. If you are on a Mac, treat facts 1–5 as unconfirmed until
    you have re-run them, and rely on `list_channel_watchers` in the meantime.
 
+## The alarm under OAuth
+
+The plugin signs in with **OAuth**; there is no API key to paste. That broke the alarm, because the
+alarm is a **separate process** and cannot see the session's MCP connection. On a machine where every
+portal tool call was working perfectly, the alarm returned `http_401` on seven consecutive turns — the
+gate built to catch a silent watcher was itself silently dead. What was measured while fixing it:
+
+1. **A hook is handed no credential, and there is no supported way for it to get one.** The hook
+   environment carries `CLAUDE_PROJECT_DIR`, `CLAUDE_PLUGIN_ROOT` and `CLAUDE_PLUGIN_DATA` and nothing
+   secret. The `Stop` payload on stdin (`session_id`, `transcript_path`, `cwd`, `permission_mode`,
+   `stop_hook_active`, …) has **no field for MCP servers, their auth state, or a token** — even the
+   MCP-specific `Elicitation` hook passes only a server name and URL. There is no `claude mcp` subcommand
+   that prints a token (`add / add-from-claude-desktop / add-json / get / list / login / logout / remove /
+   reset-project-choices / serve`; `claude mcp get` masks header values).
+2. **The tokens are on disk, in plaintext, at a fixed path** — `~/.claude/.credentials.json`, under
+   `mcpOAuth`. Claude Code ships a `windows-credman` backend, but on this machine it is dark-launched
+   behind a `tengu_windows_credman` feature flag that reads `false`, and even when enabled it falls back
+   to the same file. Windows Credential Manager holds **nothing** Claude-related. The file has ordinary
+   user ACLs and is not encrypted.
+3. **"Every `accessToken` reads EMPTY" is a trap, and it cost real time twice.** The store keeps **one
+   entry per authorization and never prunes**. Measured: 20 entries, **19 with `accessToken: ""`**, four
+   of them for *this* server — three husks and one live. Sampling the file, or reading the first match,
+   yields "they are all empty" and that reading is **wrong**. The live entry is found only by filtering
+   on a **future `expiresAt`**.
+4. **So the script reads its own entry, under rules.** Only the entry whose `serverUrl` is the endpoint
+   it is about to call; **access token only, never the refresh token** (refreshing would be a *write*
+   against the host's credential state, from a hook, to raise an alarm); never written, never printed;
+   every field treated as untrusted so an unrecognised shape degrades to "no credential" rather than
+   throwing. `PORTAL_ALARM_NO_CREDENTIAL_FILE=1` turns the path off entirely. Verified end-to-end
+   against the live API: `Authorization: Bearer` → HTTP 200 → real roster → the gate fires on real data,
+   with no API key anywhere.
+5. **The honest floor.** If that read ever stops working — the flag flips, the format changes, the token
+   is expired — the script has **nothing**, and that is a supported state, not a bug to paper over. It
+   reports what it saw locally, says plainly that it does not know, and **does not gate**. Never
+   reintroduce an API key to "fix" this; the owner moved to OAuth deliberately.
+
 ## What this design still cannot do
 
 A `Stop` hook fires at **turn end**. Gating rather than merely speaking closes that exit, but it still only
@@ -403,9 +446,15 @@ whenever someone calls this "solved". What still gets through:
   this happened. The portal scheduled task is available there too — it is an MCP call, not a harness
   feature — but nothing on those adapters prompts the agent to arm one, and it is the alarm-only half:
   there is no `CronCreate` equivalent, so an idle absence can be reported but never repaired.
-- **An alarm with no credentials.** If the script cannot resolve a key it says so — that the alarm is
-  INERT and will not tell you about an `ABSENT` watcher — at most once every ten minutes. It never
-  pretends the roster is clean.
+- **An alarm that cannot read the roster.** When there is no usable credential — or the one there is
+  gets refused, or the read keeps failing — the script **cannot confirm anything**, and it says so in
+  those words, at most once every ten minutes. It then reports the one thing it *does* know without a
+  credential: how long since an `await_my_turn` call was observed leaving this machine, for which
+  channel and which agent name. That is evidence about this machine, **not** the server's verdict, and
+  the message says that too. It **never gates** on it — `decision: block` is spent only on a roster row
+  actually read from the server — and it never pretends the roster is clean. The way out is that *the
+  agent reading the message* is authenticated even when the hook is not, so `list_channel_watchers` is
+  one tool call away.
 - **Someone else's absence.** The alarm only speaks about identities *this machine* actually watched
   under. Another agent going quiet is not this session's to answer for; that is the coordinator's read.
 - **Anything that stops an agent from stopping.** Nothing can *prevent* an agent from ending its watcher.

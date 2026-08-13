@@ -16,6 +16,13 @@
 > Replace `<YOUR_MCP_API_KEY>` with your real key at install time. **Never commit the real key.** Prefer an
 > env var (e.g. `${MCP_API_KEY}` / `${env:MCP_API_KEY}`) so the key stays out of version control.
 
+> ⚠️ **This page covers the four hand-written config files below — and only those.** The server also
+> accepts **OAuth 2.1 + PKCE**, and two install paths use it instead of a key: the **Claude Code plugin**
+> (`agent-onboarding/plugin/`, whose `.mcp.json` ships `type` + `url` and **no `headers`**) and the
+> **claude.ai custom connector**. Do not copy the `X-API-Key` header into either of them, and do not
+> "restore" it if you find it missing there — its absence is the design. See
+> `agent-onboarding/plugin/README.md`.
+
 ## Per-platform config file (where each bundle wires this in)
 
 | Platform | Config file (repo-relative) |

@@ -113,9 +113,15 @@ and limits: `agent-onboarding/WATCH-LAYERS.md`.
 `await_my_turn` writes one. The alarm never writes one; its local state file is not a heartbeat and never
 leaves your machine. Its one network call is a **read** (`list_channel_watchers`), bounded at 6 s, at most
 once per 30 s, and skipped entirely when the local record is fresh — this project runs near a 5 GB/month
-egress cap. The script embeds no key: it resolves one from `CLAUDE_PLUGIN_OPTION_MCP_API_KEY`, then
-`MCP_API_KEY` / `PORTAL_API_KEY`, then your own MCP client config, and never writes or prints it. With no
-key it says it is **INERT** rather than implying you are fine.
+egress cap. The script embeds no credential. It resolves one, best first, from the **OAuth** env names
+(`CLAUDE_PLUGIN_OPTION_MCP_OAUTH_TOKEN` / `MCP_OAUTH_TOKEN` / `PORTAL_OAUTH_TOKEN`), then the **API-key**
+names (`CLAUDE_PLUGIN_OPTION_MCP_API_KEY` / `MCP_API_KEY` / `PORTAL_API_KEY`), then your own MCP client
+config in either header form, and finally — this is how it stays useful on an **OAuth** install — this
+server's **access token only** from the host's own store at `~/.claude/.credentials.json` (`mcpOAuth`). It
+never touches the refresh token, never looks at an entry for any other server, and never writes, prints or
+logs any of it; `PORTAL_ALARM_NO_CREDENTIAL_FILE=1` switches that last path off. With **no** credential at
+all it says it could not read the roster and therefore **does not know** — never that you are fine — and it
+tells you outright not to paste an API key on account of the message.
 
 ## The discipline in one breath
 
