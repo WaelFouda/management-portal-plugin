@@ -1,7 +1,7 @@
 {
   "name": "management-portal",
   "version": "1.4.3",
-  "description": "Operate the management-portal MCP with the full agent discipline in one install. You sign in with OAuth on first use - no API key to paste, copy or store. Bundles the MCP server, the management-portal skill, the team-chat-reachability skill and its watcher sub-agent, the portal-operator subagent, the /portal and /rearm-watch commands, read-after-write hooks, and a Stop hook that arms the ABSENT alarm on install.",
+  "description": "Operate the management-portal MCP with the full agent discipline in one install. You sign in with OAuth on first use - no API key to paste, copy or store (an API key is still accepted for headless and CI clients that cannot open a browser). Bundles the MCP server, up to 253 role-scoped tools, the management-portal and team-chat-reachability skills, the canon-gates reference, the portal-operator and team-chat-watcher subagents, and the /portal and /rearm-watch commands. What actually enforces, stated plainly: the Team Chat turn-end ABSENT gate returns decision:block and is verified to refuse to end a turn; the read-after-write hook injects text only and has never been able to refuse anything. The canon gates - PreToolUse denials for fabricated ids and out-of-order writes, the debt gates, and the stand-down escape - are designed and fixture-tested but do NOT ship in this release; see skills/management-portal/canon-gates.md for the status board.",
   "author": {
     "name": "Wael Fouda",
     "email": "wael.fouda.wf@gmail.com"
