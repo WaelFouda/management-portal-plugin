@@ -47,75 +47,47 @@ READ → GAP → ALIGN(board-first) → BREAK DOWN → BUILD → TEST → VERIFY
 **Never fabricate ids** — every id comes from a `list_*`/`get_*` read or a `create_*` response. Never
 invent, guess, pattern-match, abbreviate, or reuse-from-memory an id. No id? Read for it.
 
-## Enforcement — what a hook can actually refuse, and what ships today
+## Some of this is meant to be ENFORCED, not advised — `canon-gates.md`
 
 Parts of the discipline above are designed to stop being reminders. The **canon gates** are hooks that
-`REFUSE` a tool call outright at `PreToolUse` — a fabricated id, completing a parent before its subtasks,
-editing implementation files before the task tree and flow board exist, a coordinator implementing
-instead of delegating — or `BLOCK` a turn until a write has been read back or a mid-run turn gives an
-account of itself. Others (bulk efficiency, status discipline, completeness) are **reported at turn end and refuse
-nothing**: advisory by design, not by weakness — a deny on the fourth single write cannot undo the first
-three.
+`REFUSE` a tool call outright (a fabricated id, completing a parent before its subtasks, editing
+implementation files before the task tree exists) or `BLOCK` a turn until a write has been read back or a
+mid-run turn gives an account of itself. Others (bulk efficiency, status discipline, completeness) are
+**reported at turn end and never refuse anything** — advisory by design, not by weakness.
 
-**Read the register in `canon-gates.md` (same folder) before you rely on a gate or excuse yourself from a
-rule.** Three things from it you need without opening it:
-
-- **Which build you are on decides whether any of this runs.** `scripts/canon-gate.js` and four of the
-  five canon commands are **not in plugin 1.4.3**; they are on the unmerged branches
-  `feat/canon-hooks-enforce` and `feat/canon-commands`. What 1.4.3 ships is a 61-line `portal-gate.js`
-  with no `permissionDecision` in it at all — advisory since the day it shipped, while being called a
-  gate — plus the Team Chat turn-end ABSENT gate, which does refuse to end a turn.
-- **"Proven" has three tiers and they are not interchangeable: fixture-verified, live-verified,
-  unverified.** Live-verified: a `PreToolUse` deny genuinely refuses and beats `bypassPermissions`; the
-  cold return end to end; `Stop` blocking at most once per turn. **Fixture-proven only:** `CANON-ID`'s
-  id-laundering defence — never live-verified **because the live model declined to fabricate an id at
-  all**, so a live test that passes cannot be told apart from a model that simply refused to invent one.
-- **Every gate carries a list of tools it may never refuse**, held as data and driven by the selftest.
-  That column is the anti-latch mechanism, and it exists because of a count: six latches in this one
-  feature — four shipped and were fixed, two were designed out before shipping — each of them a gate
-  whose own exit condition was unreachable. Ask what turns a gate off before you ask what it stops.
-
-Then, so nothing surprises you mid-run:
-
-- **The debt gates run FIRST, and debt is keyed by PROJECT, not by session.** An unread write or an
-  unmade close-out refuses the *next turn's work* — a portal write, a file write, or a mutating command.
-  **Reads are never work**, so no debt gate can refuse the read that settles it. A debt left on Friday
-  refuses the first work on Monday, in a new terminal: that cold return is deliberate, because a debt
-  that evaporates when you open a new window is the same leak wearing a different hat. Budget: 3
-  refusals per **distinct** debt, then it stands down permanently; 7-day TTL; `run-close` settles it.
-- **`Stop` blocks at most once per turn** — `stop_hook_active` short-circuits above the block check, and
-  that is the only reason the plugin cannot trap its owner. Measured: `BLOCK → SPEAK → BLOCK → ALLOW`,
-  and the turn ends with the write unverified. So the turn-end half **delays** a violating turn by one
-  exchange rather than preventing it, which is exactly why the debt gates exist. A hook cannot make an
-  idle session resume at all — so "never stop between phases" is enforced only in the shape that is
-  enforceable: *never end a turn silently mid-run*.
-- **No card, no gates.** A session with the gates live opens with `[portal-canon v1 · alive · token
-  <hex>]`. Hooks fail
-  open and silently on both crash and timeout, so its absence is the only signal you get; a dead hook
-  looks exactly like a live one from inside the conversation.
-- **Refusal reasons carry facts and zero imperatives** (verified mechanically). Imperatives inside a
-  `PreToolUse` deny reason are read as prompt injection and ignored, so the action that clears a gate
-  arrives on the channels you do trust: the canon card, `UserPromptSubmit` context, and `Stop` /
-  `PostToolUse` block reasons. A deny reason says "a turn in this project", never "this session".
-- **If a gate blocks work it cannot un-block**, run
-  `node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" stand-down --gate <ID|all> --reason "…"`. It takes
-  effect immediately, mid-session, and that invocation is exempt from every gate — matched by shell
-  string in **any** tool's arguments, not by a tool named `Bash`. **`/portal-stand-down` ships with
-  `feat/canon-commands` and does not exist before then**, so do not offer it as an available escape. You
-  never need a human to unblock you: stand the gate down, say so in your answer, and carry on.
+**Do not assume either way — check the status board in `canon-gates.md` (same folder) before you rely
+on a gate or excuse yourself from a rule.** Every gate there carries one of four states, and **no state
+is ever rounded up to the one above it**. As of plugin 1.5.0 the engine **ships**: `canon-gate.js`
+carries a real `permissionDecision` and is wired into the hooks, so the gates read **ARMED — shipped,
+wired and fixture-verified**. **ARMED is not ENFORCED:** no live refusal has been observed against this
+merged build, so treat them as gates that exist and are expected to fire, not as gates anyone has
+watched fire here. The one piece of enforcement observed live remains the Team Chat turn-end ABSENT
+gate. This matters concretely: 1.4.3's read-after-write "gate" was 61 lines with no
+`permissionDecision` in it at all and was advisory from the day it shipped while being called a gate —
+which is why "it ships" and "it is verified" are kept as separate sentences here.
 
 **Behave as though the discipline binds you regardless.** The gates exist to catch the drift, not to
-replace the judgement — a rule you keep only when a hook is watching was never kept. And **gates judge
-STRUCTURE, never quality**: they can see that a brief exists and was read back, never whether it is any
-good. That judgement stays yours; `canon-gates.md` carries the list of what no hook can ever check, so
-nobody later builds one that pretends.
+replace the judgement — a rule you keep only when a hook is watching was never kept.
 
-**The commands that carry the canon** (all take your own names as arguments), shipping with
-`feat/canon-commands`: `/portal-project <client> <project>` to start a disciplined run,
-`/portal-continue` to promote it and keep going without confirmation between phases,
+`canon-gates.md` also carries the full gate register, the run lifecycle, the honest limits, and — first on
+the page — **the stand-down escape**, for when a gate demands something you genuinely cannot do. You never
+need a human to unblock you: stand the gate down, say so in your answer, and carry on.
+
+Two things to internalise now:
+
+- **Gates judge STRUCTURE, never quality.** They can see that a brief exists and was read back. They
+  cannot see whether it is any good. That judgement stays yours.
+- **A hook can refuse a call and refuse to end a turn; it cannot make an idle session resume.** So
+  "never stop between phases" is enforced in the only shape that is enforceable: *never end a turn
+  silently mid-run*.
+
+**The commands** (all take your own names as arguments): `/portal-project <client> <project>` to start a
+disciplined run, `/portal-continue` to promote it and keep going without confirmation between phases,
 `/channel-coordinate <channel> <identity>` and `/channel-join <channel> <identity>` for Team Chat, and
-`/portal-stand-down [gate] [reason]` for the escape. **Today the plugin ships two: `/portal` and
-`/rearm-watch`.**
+`/portal-stand-down [gate] [reason]` for the escape.
+
+**If a session does not open with `[portal-canon v1 · alive · token …]`, none of the above is running.**
+A dead hook looks exactly like a live one from inside the conversation.
 
 ## Board-first
 
@@ -201,6 +173,39 @@ cursor, so nothing is skipped; and the call count is identical, so there is no e
 Full procedure: the `team-chat-reachability` skill teaches it; `/rearm-watch` is the command a human types
 to check or re-arm by hand; the `team-chat-watcher` sub-agent is the one **you** spawn — and spawning it is
 the only one of the three that actually makes you reachable.
+
+## Enforcement — which of these a hook can actually refuse
+
+Some of the discipline above is now backed by **hooks that refuse**, not just by this page. The
+distinction matters enormously: a refusal means the tool call never runs, while a reminder means you
+were told and nothing stopped you.
+
+**Read `canon-gates.md` (same folder) for the status board, and treat it as the only truthful answer
+to "is this enforced?"** It marks every rule **ENFORCED**, **ARMED**, **ADVISORY**, or **PENDING**,
+and nothing is rounded up. As of plugin 1.5.0 the engine has merged and **every canon gate reads
+ARMED**: the code ships, it is wired into the hooks, and `canon-selftest.js` drives each gate into
+its latched state and back out with fixture payloads. **What has not happened is a live refusal
+observed against this merged build** — so "armed" is the claim, not "proven here". The one thing in
+this plugin observed live to refuse anything is the Team Chat turn-end ABSENT gate.
+
+Three things to know now, so you are not surprised mid-run:
+
+- **No card, no gates.** A live session opens with `[portal-canon v1 · alive · token <hex>]`. Hooks
+  fail open and silently on crash and timeout, so its absence is the only signal you get.
+- **Refusal reasons are curt on purpose.** Imperatives inside a `PreToolUse` deny reason are read as
+  prompt injection and ignored, so deny reasons state facts only. The action that clears a gate is
+  on the canon card and in `Stop`/`PostToolUse` block reasons — not in the refusal.
+- **If a gate is blocking work it cannot un-block:** type `/portal-stand-down`, or run
+  `node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" stand-down --gate <ID|all> --reason "…"`. Both
+  take effect immediately, mid-session. That invocation is exempt from every gate.
+
+The commands that carry the canon: **`/portal-project`** (full initiation under a client + project),
+**`/portal-continue`** (resume autonomously — no confirmation between phases), and
+**`/channel-coordinate`** / **`/channel-join`** for Team Chat.
+
+**Gates judge structure, never quality.** They can check that a brief exists and was read back. They
+cannot check whether it is any good — and `canon-gates.md` carries the full list of what no hook can
+ever check, so nobody later builds one that pretends.
 
 ## Load the reference when you…
 

@@ -1,7 +1,7 @@
 {
   "name": "management-portal",
-  "version": "1.4.3",
-  "description": "Operate the management-portal MCP with the full agent discipline in one install. You sign in with OAuth on first use - no API key to paste, copy or store (an API key is still accepted for headless and CI clients that cannot open a browser). Bundles the MCP server, up to 253 role-scoped tools, the management-portal and team-chat-reachability skills, the canon-gates reference, the portal-operator and team-chat-watcher subagents, and the /portal and /rearm-watch commands. What actually enforces, stated plainly: the Team Chat turn-end ABSENT gate returns decision:block and is verified to refuse to end a turn; the read-after-write hook injects text only and has never been able to refuse anything. The canon gates - PreToolUse denials for fabricated ids and out-of-order writes, the debt gates, and the stand-down escape - are designed and fixture-tested but do NOT ship in this release; see skills/management-portal/canon-gates.md for the status board.",
+  "version": "1.5.0",
+  "description": "Operate the management-portal MCP with the full agent discipline in one install - now ENFORCED by hooks, not merely advised. You sign in with OAuth on first use - no API key to paste, copy or store. Bundles the MCP server, the management-portal and team-chat-reachability skills, the canon-gates reference, the portal-operator and team-chat-watcher subagents, the /portal, /rearm-watch, /portal-project, /portal-continue, /channel-coordinate, /channel-join and /portal-stand-down commands, and the canon gates: PreToolUse denials that refuse a fabricated id or an out-of-order write, PostToolUse and Stop blocks that compel read-after-write and an account before a mid-run turn ends, turn-end advisories for bulk/status/completeness, and a documented stand-down escape for every one of them.",
   "author": {
     "name": "Wael Fouda",
     "email": "wael.fouda.wf@gmail.com"

@@ -3,8 +3,7 @@
 > Load-on-demand deep doc for the `management-portal` skill. Summarizes the canonical
 > `agent-onboarding/DISCIPLINE.md` (v1.0.0) and its companions `WRITE-READ-MAP.md` and `BOARD-FIRST.md`.
 > If anything here ever conflicts with those, **the canon wins** — change `DISCIPLINE.md` first, then
-> update this copy **by hand, in the same commit**. There is no generator; `shared/` and `bundles/` are
-> hand-maintained copies and nothing warns you when they drift. Read this before you actually build.
+> regenerate this. Read this before you actually build.
 
 ---
 
@@ -137,6 +136,60 @@ Each principle maps to an exact tool sequence; the verifying read is part of the
   → re-`list_subtasks(parent)` to confirm all children complete → only then `complete_task(parent)` and
   `update_proposal_milestone(status:"delivered")`.
 
+### The standing canon (a)–(h) → tool sequences
+
+These are the instructions the owner has had to repeat session after session. They are canon, in the
+same sense as everything above, and several are now backed by gates — see `canon-gates.md` for which,
+and for the status board that says whether a gate is actually live yet.
+
+- **(a) Project initiation** — on a new project, a big scope, or a scope change:
+  `list_clients` (or `create_client`) → `create_project(name, client_id)` →
+  `update_brief(...every field)` + `insert_diagram(entity_type:"brief")` →
+  `create_proposal(project_id, introduction)` + `insert_diagram(entity_type:"proposal")` +
+  `update_proposal(disclaimers_html)` → per phase `add_proposal_phase(objective, deliverables,
+  acceptance, deadline)` → per phase `add_proposal_milestone(...)` + `insert_diagram(entity_type:
+  "milestone")` → `create_task` per milestone → `create_subtask` → nested `create_subtask` →
+  `create_flow_cluster` per phase → `create_flow_connection` for each dependency. **Both the brief and
+  the proposal carry mermaid and rich formats.** **Verify:** `get_proposal_detail(project_id)`,
+  `list_tasks`, `list_subtasks`, `list_flow_clusters`, `list_flow_connections`.
+- **(b) Never stop between phases** — proceed to the next phase **without waiting for confirmation**;
+  the owner is not there to say continue. On finishing **all** phases, `create_board` a summary board
+  describing what was done, with blocks. Test end-to-end including UI/UX and console debugging in the
+  preview panel. **The honest limit:** no hook can resume an idle session, so this ships enforced only
+  as *never end a turn silently mid-run* — if you genuinely cannot continue, `create_journal(...,
+  tags:["blocked"])` saying what stopped you, and end with that account rather than in silence.
+- **(c) Status discipline** — as work completes: `update_proposal_phase(status)`,
+  `update_milestone_status(status)`, `complete_task(...)`, bottom-up. **Verify:**
+  `get_proposal_detail`. A finished task tree under an untouched status is the commonest drift.
+- **(d) Journals** — `create_journal_folder(name:"<project> — run log")` once, then after **every
+  phase** `create_journal(folder_id, title, body, tags, logged_at)` with lessons learnt and anything
+  that must be returned to — **and always read it back** with `get_journal` / `list_journals` /
+  `search_journals`. Write **and** read-back; the gate checks for both halves.
+- **(e) Knowledge graph** — `create_knowledge_graph(name)` →
+  `add_source_to_knowledge_graph(...)` spanning **the journal folder, notes, boards, tags, the project
+  and its tasks** → `extract_knowledge_graph` (the cheap incremental path) →
+  `interpret_knowledge_graph` → **read it back** with `get_knowledge_graph` /
+  `semantic_search_knowledge_graph`. **Never `regenerate_knowledge_graph` to refresh** — it destroys
+  the existing nodes and edges first.
+- **(f) Efficiency** — the portal has a **`bulk`** tool. Use it instead of N single calls:
+  `bulk(calls:[{tool:"create_task",args:{…}}, …], stop_on_error:false)`. A write and its verifying
+  read can go in the **same** bulk. Read the per-item results — `[i] FAILED — …` marks the ones that
+  did not land.
+- **(g) Team Chat — coordinator** — `read_chat_channels` → `register_me_as_agent(name)` →
+  `start_watching_channel` + spawn `team-chat-watcher` → `claim_coordinator_title(channel_id, title)`
+  (**token returned once**) → `set_channel_policy(...)` → `require_channel_watch(...)` per agent.
+  The policy covers: what the channel is for; how it is used; participants and each one's role; the
+  project scope and a mention of the project; read the brief, proposal, task tree and flow board
+  first; follow the canon strictly; each agent's tasks; **do not chat idly and do not interfere with
+  each other**; follow the coordinator, who acts with the owner's full authority; and **messages are
+  PING-PONG** — an agent that sends **waits for a reply** rather than throwing and running. Agents are
+  approved to spawn as many concurrent sub-agents and workflows as they need. **The coordinator
+  counsels and coordinates only — it does not implement.**
+- **(h) Team Chat — participant** — `read_channel_policy` **and** `read_channel_messages` **before any
+  other work** → `start_watching_channel` + spawn `team-chat-watcher` → then start the mission. Keep
+  watching and **respond** rather than ask-and-run. Follow the coordinator's instructions — canon, but
+  with no structural signature, so no hook checks it.
+
 ### Tool map (orient before you act)
 
 - **Read (safe):** `get_*` / `list_*` — clients, projects, briefs, proposals (+ `get_proposal_detail`,
@@ -151,19 +204,12 @@ Each principle maps to an exact tool sequence; the verifying read is part of the
 
 ## 2b. The canon (a)–(h) — one tool sequence each
 
-The eight standing rules the owner should never have to type again. A gate id is named where one is
-**designed** to cover the rule — but **check the register in `canon-gates.md` before relying on any of
-them**, because none of these gates is in plugin 1.4.3: `scripts/canon-gate.js` is on the unmerged branch
-`feat/canon-hooks-enforce`, and the commands that drive a run are on `feat/canon-commands`. **Treat all
-eight as rules you keep yourself**, and read the gate ids below as *which gate will cover this once it
-ships*. `canon-gates.md` carries the proven-status board (fixture-verified / live-verified / unverified),
-the tools each gate may never refuse, and the stand-down escape.
-
-Two behaviours of that build are worth knowing while you read these, because they change what a rule
-costs you tomorrow rather than today. **The two debt gates run before every other refusal**, so an unread
-write or an unmade close-out refuses the *next turn's work* rather than nagging at the end of this one —
-and **debt is keyed by project, not session**, so it survives closing the terminal. **Reads are never
-work**, which is why no debt gate can refuse the read that settles it.
+The eight standing rules the owner should never have to type again. A gate id is named where one
+covers the rule — but **check the status board in `canon-gates.md` before relying on any of them.** As of
+plugin 1.5.0 every canon gate reads **ARMED**: the engine ships, it is wired into the hooks, and it is
+fixture-verified — but **no live refusal has been observed against this merged build**, so treat all eight
+as rules you keep yourself and the gates as a backstop rather than a guarantee. `canon-gates.md` also
+carries the stand-down escape.
 
 **(a) PROJECT INITIATION** — a new project, a big scope, or a scope change. *(gates:
 `CANON-BOARD-FIRST` while the run is in ALIGN, then `CANON-TREE-FIRST`)*
@@ -177,9 +223,8 @@ budget/deadline)` + `insert_diagram(entity_type:"brief")` → `create_proposal(p
 `add_proposal_milestone(objective, description, deliverables, acceptance, time_value, cost, deadline)` +
 `insert_diagram(entity_type:"milestone")` → per milestone `create_task` → `create_subtask` → **nested**
 `create_subtask(parent_task_id:<subtask_id>)` → `create_flow_cluster` per phase →
-`create_flow_connection` for every real dependency. **Both the brief and the proposal carry mermaid and
-rich formats.** **Verify:** `get_brief`, `get_proposal_detail`, `list_tasks`, `list_subtasks`,
-`list_flow_clusters`, `list_flow_connections`.
+`create_flow_connection` for every real dependency. **Verify:** `get_brief`, `get_proposal_detail`,
+`list_tasks`, `list_subtasks`, `list_flow_clusters`, `list_flow_connections`.
 **Then implement to final delivery** — which is canon (b).
 
 **(b) NEVER STOP BETWEEN PHASES** — *(gate: `CANON-ACCOUNT`, at turn end)*
@@ -223,10 +268,8 @@ a hypothesis, never as established fact.
 
 `bulk({calls:[{tool, args}, …], stop_on_error})` rather than N single calls. It is one round trip and one
 result block, and the hook ledger expands it, so a write and its verifying read **inside the same bulk**
-satisfy read-after-write in one call — and the ids returned by its inner calls count as ids you have seen.
-**Read the per-item results**: `[i] FAILED — …` marks the ones that did not land. This is reported and
-never refused: a refusal on the fourth single call cannot undo the first three, and single calls are
-sometimes right.
+satisfy read-after-write in one call. This is reported and never refused: a refusal on the fourth single
+call cannot undo the first three, and single calls are sometimes right.
 
 **(g) TEAM CHAT — COORDINATOR** — *(gate: `CANON-COORD-ROLE`)*
 
@@ -241,12 +284,9 @@ task tree and flow board before acting, (6) follow the canon strictly, (7) each 
 chat idly and do not interfere with each other — follow the coordinator, who acts with the owner's full
 authority, (9) messages are **ping-pong**: an agent that sends **waits for a reply** rather than throwing
 and running. Agents are approved to spawn as many concurrent sub-agents and workflows as they need.
-**The coordinator COUNSELS AND COORDINATES ONLY and does not implement** — while you hold the role the
-gate refuses **any file write or mutating command, judged by effect and never by tool name**. Portal
-tools carry an empty `effect`, so **portal writes are not refused by it**; and nothing asks whether the
-tool is called `Bash`, which is what a name-shaped matcher got wrong when a `PowerShell` call walked past
-it. Its only never-refuses entry is `transfer_coordinator_title`, which is also how you clear it. The
-nine-heading check is a completeness prompt; no hook can tell whether the policy is any good.
+**The coordinator COUNSELS AND COORDINATES ONLY and does not implement** — the gate refuses your `Write`,
+`Edit` and mutating `Bash` while you hold the role. The nine-heading check is a completeness prompt; no
+hook can tell whether the policy is any good.
 
 **(h) TEAM CHAT — PARTICIPANT** — *(gate: `CANON-POLICY-FIRST`)*
 
@@ -264,32 +304,35 @@ For every write tool, this is the read tool you call afterward to confirm the ch
 has no read path here, that is a coverage gap** — record it for the read=write coverage audit and close it
 (`../../../COVERAGE-AUDIT.md`).
 
-> ⚠️ **This table is mirrored as a frozen constant (`WRITE_READ_MAP`) inside `scripts/canon-gate.js`,**
-> where the `CANON-READ-BACK` gate uses it to decide which read clears which write — a hook cannot read a
-> markdown table at runtime. The constant currently holds **98 write→read rows**; this table groups
-> several write tools onto one row, so the two counts are different numbers describing the same map.
-> **This file stays the human source of truth; the constant is a copy.** A row added, removed or
+> ⚠️ **This table is mirrored as a frozen constant (`WRITE_READ_MAP`) inside
+> `scripts/canon-gate.js`,** where the `CANON-READ-BACK` gate uses it to decide which read clears which
+> write. **This file stays the human source of truth; the constant is a copy.** A row added, removed or
 > re-pointed here must be changed in the script **in the same commit** — otherwise the gate either blocks
 > a write that has no read it recognises, or silently stops enforcing one that does.
 
 | Write tool(s) | Verify by reading | Confirms |
 |---|---|---|
 | `create_client`, `update_client` | `get_client` / `list_clients` | client fields persisted |
+| `delete_client` | `list_clients` / `get_client` | the client is GONE from the list (a delete is verified by absence, not presence) |
 | `create_project`, `update_project` | `get_project` / `list_projects` | project fields persisted |
+| `delete_project` | `list_projects` / `get_project` | the project is GONE from the list (a delete is verified by absence, not presence) |
 | `update_brief`, `update_brief_field` | `get_brief` | every brief field (overview/goals/deliverables/requirements/notes + diagram) |
 | `create_proposal`, `update_proposal` | `get_proposal_detail` | title, introduction (+roadmap diagram), disclaimers |
 | `add_proposal_phase`, `update_proposal_phase`, `reorder_proposal_phases` | `get_proposal_detail` | phase name/objective/deliverables/acceptance/deadline/order |
 | `add_proposal_milestone`, `update_proposal_milestone`, `reorder_proposal_milestones` | `get_proposal_detail` (+ `list_milestones`) | every milestone field (objective/description/diagram/deliverables/acceptance/time/cost/deadline/status) |
 | `insert_diagram` (proposal/brief/milestone/phase) | `get_proposal_detail` / `get_brief` | the diagram is in the target field |
 | `create_task`, `update_task`, `complete_task` | `get_task` / `list_tasks` | task fields + status |
+| `delete_task` | `list_tasks` / `get_task` | the task is GONE from the list (a delete is verified by absence, not presence) |
 | `create_subtask` | `list_subtasks(parent_task_id)` | subtask exists under the right parent (and bottom-up completion) |
 | `create_flow_cluster`, `update_flow_cluster`, `delete_flow_cluster` | `list_flow_clusters` | cluster + its `task_ids` |
 | `create_flow_connection`, `update_flow_connection`, `delete_flow_connection` | `list_flow_connections` | the edge (may land even if the call reports a timeout) |
 | `create_board`, `update_board` | `read_board` / `list_boards` | board metadata |
+| `delete_board` | `list_boards` / `read_board` | the board is GONE from the list (a delete is verified by absence, not presence) |
 | `create_board_block`, `update_board_block`, `reorder_blocks`, `set_block_parent`, `delete_board_block` | `list_board_blocks` / `read_board` | block content, type, order, parent |
 | `add_board_comment`, `edit_comment`, `resolve_comment`, `react_to_comment` | `read_board` (comment counts) | comment state |
 | `create_note`, `update_note`, `update_note_content`, `delete_note` | `get_note` / `list_notes` | note fields |
 | `create_note_column`, `update_note_column`, `delete_note_column` | `list_note_columns` | category/column state |
+| `delete_knowledge_graph` | `list_knowledge_graphs` | the graph is GONE from the list (a delete is verified by absence, not presence) |
 | `create_event`, `update_event`, `delete_event` | `list_events` | event fields |
 | `log_time`, `start_timer`, `stop_timer`, `update_time_entry`, `delete_time_entry` | `list_time_entries` / `get_time_summary` | time entries/totals |
 | `create_quick_proposal`, `update_quick_proposal`, `promote_quick_proposal`, `attach_to_quick_proposal` | `get_quick_proposal` / `list_quick_proposals` | quick-proposal fields |
@@ -308,9 +351,11 @@ has no read path here, that is a coverage gap** — record it for the read=write
 **Rule:** after a write, call the mapped read tool and confirm the *specific field you wrote* is present
 and correct. Trust the data effect, not the success message or the schema.
 
-**Deletes clear on ABSENCE.** Seven `delete_*` rows are discharged by the id being **gone** from the
-mapped read, never by it coming back — an id that returns is proof the delete failed. The gate says so in
-its own block text; it is written here because the opposite polarity shipped once and latched.
+> ⚠️ **This table is mirrored in code.** The `CANON-READ-BACK` gate holds the same rows as a frozen
+> `WRITE_READ_MAP` constant in `scripts/canon-gate.js`, because a hook cannot read a markdown table at
+> runtime. **This file stays the human source of truth; the constant must match it.** A change to
+> either one requires the same change to the other **in the same commit** — otherwise the gate either
+> demands a read tool that no longer exists, or silently stops demanding one that does.
 
 ---
 

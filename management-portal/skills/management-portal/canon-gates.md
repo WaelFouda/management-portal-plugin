@@ -9,19 +9,13 @@
 > **This file is the single source of truth for gate status.** The plugin README and the public
 > `/docs/mcp` page mirror the status board below. If they ever disagree, this file wins — and the
 > disagreement is a bug worth fixing in the same commit.
->
-> **Nothing below has shipped.** The released plugin is **1.4.3** and contains no canon gate at all.
-> The gate engine lives on `feat/canon-hooks-enforce`, the slash commands on `feat/canon-commands`,
-> and this page on `feat/canon-docs`; all three fork independently from master. Read every sentence
-> here as *what the merged build does*, never as *what your install does*. The one way to tell them
-> apart from inside a session is the canon card — see "The liveness proof".
 
 ---
 
 ## STAND DOWN — read this first if a gate is blocking you
 
-You are probably here in a hurry. **Any one of these works, and the first takes effect immediately,
-mid-session, without a restart:**
+You are probably here in a hurry. **Any one of these works, and the first two take effect
+immediately, mid-session, without a restart:**
 
 ```bash
 # 1. Stand one gate down, or all of them. Re-read on every hook invocation.
@@ -29,7 +23,7 @@ node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" stand-down --gate <GATE-ID|all
 ```
 
 ```
-# 2. Type the command. Ships on the commands lane only — see "The merge trap".
+# 2. Type the command.
 /portal-stand-down [gate id or 'all'] [reason]
 ```
 
@@ -39,16 +33,11 @@ PORTAL_CANON=off        # every gate silent
 PORTAL_CANON=advisory   # nothing refuses or blocks; the Stop report still prints
 ```
 
-`/portal-stand-down` takes no argument it can refuse: no gate id stands down **all**, and an
-unrecognised gate id prints the list and stands down **all**. An escape hatch that interrogates you
-is not an escape hatch.
-
 **Three things that make this a real escape and not a promise:**
 
-- The `stand-down` invocation is **exempt from every gate**, and it is matched against **any shell
-  string in any tool's arguments** — not just `Bash`. It used to test `raw === 'Bash'`, which meant a
-  session latched by the coordinator gate could not escape from PowerShell. A gate that can block its
-  own escape is the trap this section exists to prevent.
+- The `stand-down` invocation is **exempt from every gate, including the coordinator gate that
+  otherwise refuses `Bash`.** A gate that can block its own escape is the trap this section exists
+  to prevent.
 - It is a **file**, not a flag, precisely because the owner runs `defaultMode: bypassPermissions` —
   there is no permission prompt to click "no" on in an autonomous run, so the brake has to be
   something a hook re-reads from disk on every single invocation.
@@ -56,105 +45,91 @@ is not an escape hatch.
   `STAND-DOWN-<GATE-ID>` (one gate everywhere). **Deleting the file re-arms the gate.** You can
   also just delete `<CANON_HOME>/runs/by-project/<projhash>.json` to end a run outright.
 
-Gates also stand **themselves** down: 3 Stop blocks per gate per run (2 for closeout), 3 refusals per
-distinct debt, 12 PostToolUse blocks per session, a 7-day debt TTL, a 24h run TTL, and a dead-man rule
-that disarms any gate which blocks twice with no tool call in between. A stuck session un-sticks
-itself even if nobody reads this page.
-
-**`run-close` is the clean exit, not a stand-down.** It closes the run, deletes the debt file **and
-stamps `run.debt_settled_at`**. The stamp is load-bearing: deleting the file alone did not work,
-because the fold rebuilt the debt from the replayed ledger on the next call.
+Gates also stand **themselves** down: 3 blocks per gate per run (2 for closeout), 12 PostToolUse
+blocks per session, and a dead-man rule that disarms any gate which blocks twice with no tool call
+in between. A stuck session un-sticks itself even if nobody reads this page.
 
 ---
 
 ## The status board
 
 **This is the part that matters.** In this codebase, "documented as enforced" has repeatedly not
-meant "enforced": a hook that looked installed and did nothing, gates whose failure arms could never
-fire, a gate that skipped at exit 77 and therefore silently did not exist. So every rule below
-carries a **verdict class** and, separately, a **proven status** — and neither one is ever quietly
-rounded up.
+meant "enforced": a hook that looked installed and did nothing, four gates whose failure arms could
+never fire, a gate that skipped at exit 77 and therefore silently did not exist. So every rule below
+carries one of exactly four states, and **no state is ever quietly rounded up to the one above it**.
 
-| Verdict class | Means |
+| State | Means |
 |---|---|
-| **ENFORCED** | Refuses a call, or refuses to end a turn. |
-| **ADVISORY** | Injects text only. It can be ignored, and sometimes should be. |
-| **PENDING** | Designed, not yet released. The design is below; no install contains it. |
+| **ENFORCED** | Observed on a real session **against this build** to refuse a call or refuse to end a turn. The observation is named. |
+| **ARMED** | The code **ships** and is wired into the hook that fires it, and its behaviour is **fixture-verified** — `canon-selftest.js` spawns the real `canon-gate.js` with fixture payloads on stdin and drives each gate into its latched state and back out. **ARMED is not ENFORCED**: it says the gate exists and does what the fixtures say, not that anyone has watched it refuse a live call on this build. |
+| **ADVISORY** | Verified to only inject text. It can be ignored, and sometimes should be. |
+| **PENDING** | Neither the code nor the evidence. The design exists; nothing else does. Treat as advisory until proven. |
 
-| Proven status | Means |
-|---|---|
-| **live-verified** | Installed over the real plugin cache and driven with `claude -p` on 2.1.231 with `--debug-file`. Observed, not reasoned. |
-| **fixture-verified** | `canon-selftest.js` spawns the real `canon-gate.js` with fixture payloads on stdin under an isolated `PORTAL_CANON_HOME`. No live session, no MCP server. Proves the code path; does not prove the model meets it. |
-| **unverified** | Designed and reasoned, never observed. Say so out loud. |
+### As of 2026-08-14 — plugin 1.5.0, the engine has merged and ships
 
-### As of 2026-08-14 — unreleased; master ships 1.4.3
+**The engine ships.** `scripts/canon-gate.js` is present, 2062 lines, and emits a real `PreToolUse`
+`hookSpecificOutput.permissionDecision: "deny"`. `hooks/hooks.json` holds **11 hook entries**, and
+canon-gate owns **8** of them — one on each of `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
+`PostToolUse`, `SubagentStart`, `SubagentStop`, `Stop` and `SessionEnd`; `watch-alarm.js` owns the
+other three. The advisory `portal-gate.js` that canon-gate replaces has been **deleted**.
 
-| Rule | Verdict class | Proven status |
+| Rule | Verdict | **Status** |
 |---|---|---|
-| Team Chat turn-end ABSENT gate (`watch-alarm.js`) | **ENFORCED** | **live-verified** — `decision: block`, on 2.1.222 and 2.1.85. Shipping since 1.4.x |
-| Gate 1 read-after-write reminders (`portal-gate.js`, 1.4.3) | **ADVISORY** | **live-verified as advisory**, and weaker than it looks — see "What 1.4.3 actually does" |
-| Every canon gate in the register below | **PENDING — no release contains them** | **fixture-verified** across the register; several of the mechanisms they rest on are **live-verified**; one path is **fixture-only**. See "What is proven, and how" |
+| Team Chat turn-end ABSENT gate (`watch-alarm.js`) | refuses to end a turn | **ENFORCED** — shipping since 1.4.x, `decision: block`, verified on 2.1.222 and 2.1.85 |
+| Every canon gate in the register below | refuses / blocks / advises | **ARMED** — shipped, wired, fixture-verified. **No live refusal has been observed against this merged build.** |
+| The 1.4.3 read-after-write reminders (`portal-gate.js`) | reminder only | **GONE** — the file is deleted in 1.5.0. See "What 1.4.3 did" below |
 
-The canon gates ship in a release that does not exist yet. **Do not tell anyone a canon gate is
-protecting them until an install exists that contains one.** When the code lanes merge and the
-version moves, update this one table and the README and `/docs/mcp` sections that mirror it.
+**Say this precisely, because the two halves are different claims.** What changed is that the
+engine **shipped**: the old status line — "the engine lane has not pushed `canon-gate.js`" — is now
+false, and the register below is a description of code that exists rather than a design contract.
+What has **not** changed is that **nobody has driven this merged tree with `claude -p` and watched a
+canon gate refuse a live call.** So the honest sentence is *"the gates ship and are armed; they are
+fixture-verified, not verified here"* — **not** *"the gates are verified and working."* Rounding
+ARMED up to ENFORCED would waste the whole reason this board exists.
 
-### What 1.4.3 actually does, measured
+**What the evidence actually covers.** `canon-gate.js`, `canon-lib.js`, `canon-selftest.js` and
+`hooks/hooks.json` merged **byte-for-byte unchanged** from the engine lane (`git diff 8666e28 HEAD`
+over those four paths is empty). So the lane's own live runs — a `PreToolUse` deny genuinely
+refusing under `bypassPermissions`, the cold return across a wiped ledger, debt-budget degradation,
+Stop blocking at most once per turn, a deny reason read as prompt injection and correctly not
+followed — exercised **these bytes**. They did **not** exercise this composition of 34 branches, on
+this machine, at this HEAD. That gap is why the row above reads ARMED and not ENFORCED.
+
+**Three tiers of evidence, and they are not interchangeable:** *fixture-verified* (the selftest
+spawns the real binary under an isolated `PORTAL_CANON_HOME`; no live session, no MCP server —
+the suite **currently reports 321 assertions**, which is an emergent count summed from `check()`
+calls and partly driven off `REGISTER`, so **never quote 321 as a constant**); *live-verified*
+(installed over the real plugin cache and driven with `claude -p --debug-file`); and *unverified*
+(designed and reasoned, not observed). One gate is deliberately **fixture-proven only**:
+`CANON-ID`'s provenance split has never been live-verified, because the live model **declined to
+fabricate an id at all** — so a live `CANON-ID` test that "passes" may be passing because the model
+refused to invent an id, not because the hook refused the call. The two are indistinguishable from
+outside, and the fixture is the only evidence that separates them.
+
+**When a live refusal is finally observed on this build, update this one table plus the README
+status box and the `/docs/mcp` sections that mirror it** — they are required to agree.
+
+### What 1.4.3 did, measured — and why the file is gone
 
 Worth knowing, because it is the reason this whole effort exists:
 
-- `portal-gate.js` is **61 lines and contains no `permissionDecision` at all.** It cannot refuse
-  anything. It emits a fixed `hookSpecificOutput.additionalContext` string and exits 0. The entire
-  read-after-write "gate" has been advisory since it shipped.
-- Worse, `additionalContext` on **PreToolUse/PostToolUse is not proven to reach the model** on
+- `portal-gate.js` **was 61 lines and contained no `permissionDecision` at all.** It could not
+  refuse anything. It emitted a fixed `hookSpecificOutput.additionalContext` string and exited 0.
+  The entire read-after-write "gate" was advisory for its whole service life, while being described
+  as a gate. **In 1.5.0 that file is deleted** and `canon-gate.js` carries the rule instead.
+- `additionalContext` on **PreToolUse/PostToolUse is still not proven to reach the model** on
   2.1.231. Plain stdout is definitely discarded (measured on 2.1.222, Windows). So those two
-  reminders may be reaching nobody at all. **No new gate may depend on that channel**, and none does.
-- The shipped hook matcher, `mcp__(plugin_management-portal_)?management-portal__…`, is a **full**
-  match — so it is **inert** for a claude.ai-connector install (`mcp__claude_ai_management-portal__*`)
-  and for a UUID-named install (`mcp__<uuid>__*`). Both spellings are live in the wild; this session's
-  own tool registry carries a UUID-named copy of the portal tools that the shipped matcher would
-  never fire on. The gate engine matches `.*` and scopes at runtime instead — see "Scoping".
-
----
-
-## What is proven, and how
-
-**Live-verified:**
-
-- A `PreToolUse` `permissionDecision: "deny"` genuinely refuses the call, on MCP tools, inside
-  subagents, and over a global `bypassPermissions`.
-- The `PowerShell` bypass, measured as a **failure before the fix**: `permission_denials: []` and
-  zero hook entries.
-- **The cold return, end to end.** Run 1 ended `stop_reason: end_turn` with the close-out missing;
-  run 2, in a **new session whose ledger had been wiped**, had its first `Write` DENIED.
-- **The split-channel design.** On a 3-day-old debt the model recovered `read_board("7b3f1a2e-…")`
-  verbatim — a string present **only** in `additionalContext` and never in the deny reason. That is
-  direct evidence that facts belong in refusals and instructions belong in the trusted channels.
-- Debt budget degradation: 3 denials, success on the 4th.
-- Stop blocking **at most once per turn**, across 5 turns.
-- Deny-reason-as-injection, measured twice.
-
-**Fixture-proven ONLY — the id-laundering path.** `CANON-ID`'s provenance split has never been
-live-verified, **because the live model declined to fabricate an id at all**. This distinction has to
-survive every rewrite of this page: **a `CANON-ID` test that passes live may be passing because the
-model refused to invent an id, not because the hook refused the call.** The two are indistinguishable
-from outside the process. The fixture is the only evidence that separates them, and it is the only
-reason we can say the hook does anything here.
-
-**Explicitly NOT proven:**
-
-- Pre/PostToolUse `additionalContext` (which is why nothing depends on it).
-- `run.all_phases_terminal`'s real derivation — only ever reached in fixtures by patching the run
-  manifest.
-- Whether a reason carrying **no** imperatives still trips the injection heuristic.
-- Whether the Stop ordering guarantee below holds under the runtime.
-
-**The selftest count.** The suite currently reports **321 assertions**, 0 failed. **`321` appears
-nowhere in the source** — it is the runtime sum of `check()` calls, partly data-driven off the
-register, so adding one register row silently changes it. Quote it as "currently reports", never as a
-constant. There is no argv filter: no `--only`, no `--grep`. And **the selftest contains zero timing
-instrumentation** — it is a correctness harness and measures no latency whatsoever. Performance
-numbers come from a separate A/B run; see `agent-onboarding/CANON-GATES.md`.
+  reminders may have been reaching nobody at all. **No canon gate depends on that channel** — the
+  refusals travel on `permissionDecision`, and the escapes on `SessionStart`/`UserPromptSubmit`
+  `additionalContext` and on `PostToolUse`/`Stop` block reasons, all three of which are proven.
+- The 1.4.3 hook matcher, `mcp__(plugin_management-portal_)?management-portal__…`, was a **full**
+  match — so it was **inert** for a claude.ai-connector install (`mcp__claude_ai_management-portal__*`)
+  and for a UUID-named install (`mcp__<uuid>__*`). Both spellings are live in the wild. **1.5.0 fixes
+  this the only way that generalises:** the `PreToolUse` and `PostToolUse` matchers are now `.*`, and
+  the scoping happens **at runtime** against a frozen set of 257 portal tool names. A tool outside
+  that set is never subject to a portal invariant, which is what keeps Supabase, Desktop Commander,
+  chrome-devtools and playwright out of the blast radius. **Never enumerate install spellings in a
+  regex again** — that is how this broke in the first place.
 
 ---
 
@@ -170,24 +145,11 @@ Three words, used precisely, everywhere in this system:
 ### Why refusal reasons sound curt and never tell you what to do
 
 Measured twice: **instructions inside a `PreToolUse` deny reason are read as prompt injection and
-deliberately not followed.** A third probe told the model to write an unlock file; it declined, and
-it was right to. A deny reason that says "to clear this, call X" gets the gate itself reported as an
-attack.
-
-So refusal reasons **state facts only and carry no imperatives** — the gate id, values lifted from
-*this call*, the canon rule — and when a gate can name nothing concrete it says nothing. This is
-checked mechanically, not by taste: `evaluateCall()` contains zero occurrences of `standDownLine`,
-`/portal-stand-down`, or `TO STAND IT DOWN`.
-
-Every clearing action travels through the channels the model does trust: the `SessionStart` canon
-card, `UserPromptSubmit` context, and `PostToolUse` / `Stop` block reasons.
-
-One deliberate wording rule: **deny reasons say "a turn in this project", never "this session".**
-Debt is keyed by project and outlives a session, so the "this session" phrasing would be false in
-exactly the case the gate exists for — and a refusal the reader can disprove has spent its credit.
-
-**If a refusal seems unhelpfully terse, that is the design, not an oversight.** The clearing action
-is on the card.
+deliberately not followed.** A deny reason that says "to clear this, call X" gets the gate itself
+reported as an attack. So refusal reasons state facts only — the gate id, the fact about this call,
+the canon rule — and every clearing action is published through the channels the model does trust:
+the session-start canon card, `PostToolUse` block reasons, and `Stop` block reasons. **If a refusal
+seems unhelpfully terse, that is the design, not an oversight.** The clearing action is on the card.
 
 ---
 
@@ -200,21 +162,16 @@ Every session opens with a **canon card** injected at `SessionStart`, and its fi
 ```
 
 That token is also written to the ledger. **Its presence is the only in-conversation proof the gates
-are running.** Hooks fail open **and silently**: on a crash and on a timeout the tool call proceeds
-and the model is told nothing, so **a green conversation is not evidence a gate is alive.** A dead
-gate looks exactly like a live one from inside the conversation.
+are running.** Hooks fail open and silently: on a crash and on a timeout the tool call proceeds and
+the model is told nothing, so **a green conversation is not evidence a gate is alive.** A dead gate
+looks exactly like a live one from inside the conversation.
 
-The card also carries the run state, the gate register, and the stand-down block verbatim. It is
-capped at `CARD_CAP = 3000` characters (raised from 2600 — the live card measured 2614) and it is
-assembled in three pieces, **head / gates / tail**, rather than truncated: a blind `slice()` cuts the
-tail first, and the tail is **the escape**. The one thing a reader in trouble needs is the one thing
-a naive cap would delete.
+The card also carries the run state, the gate register, and the stand-down block verbatim.
 
 ### Checking properly, from a terminal
 
 ```bash
 claude -p "list two files" --output-format stream-json --include-hook-events --verbose
-claude -p "…" --debug-file ./hooks.log     # the same evidence, written to a file
 ```
 
 Look for `{"type":"system","subtype":"hook_response","hook_name":"PreToolUse:…","exit_code":0,…}`.
@@ -230,149 +187,63 @@ node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" selftest  # fixture payloads t
 
 ## The gate register
 
-**13 gates live in `REGISTER`.** Plus `CANON-READ-BACK-STOP`, a real and separately stand-downable
-gate that is **not** in `REGISTER` (see the gap flagged below). Plus 3 advisories. Seventeen distinct
-`CANON-*` ids exist in the code.
+**Status of every row: ARMED — shipped, wired and fixture-verified; no live refusal has been
+observed against this build.** See the status board. This register is now a description of
+`canon-gate.js` as it stands, not a design contract.
 
-**Verdict class of every row: PENDING — no release contains them.** Proven status: fixture-verified,
-with the live-verified and fixture-only exceptions named above.
+**Read the fourth column. It is the anti-latch mechanism, and it is the reason this table is
+shaped like this.** Two gates once shipped as **one-way latches**: `CANON-COORD-ROLE` latched on
+`claim_coordinator_title` with nothing anywhere able to un-latch it, and `CANON-JOURNAL-PHASE`
+refused `create_journal` — *the exact call it demanded* — because `create_journal` is itself a
+portal write. A gate that refuses the action it names is worse than no gate: the model does what the
+card says, the refusal persists, and the escape text loses its credit along with it. So the key is
+held as **data** in `REGISTER`'s fourth column, and `canon-selftest.js` drives each gate into its
+latched state and back out **through exactly those calls**. **Documentation that omits this column
+recreates the bug.**
 
-### The fourth column is the point
+`REGISTER` carries **13 gates**. `CANON-READ-BACK-STOP` is a real, separately stand-downable gate
+that is **not** in `REGISTER` — so it never appears on the canon card or in `doctor` output, even
+though its own block reason tells you to stand it down by name. Three advisories sit outside it too.
 
-`REGISTER`'s fourth column is **the tools this gate may never refuse**. It is held as data, not as a
-comment, and the selftest drives every gate into its latched state and back out through exactly those
-calls. **A version of this register without that column recreates the bug it exists to prevent.**
+### Refusals (PreToolUse — the call never runs)
 
-The bug is a **latch**: a gate whose own exit condition is unreachable, so the only way out is the
-stand-down. Six of them were found in this feature.
+Listed in `evaluateCall()` order. **The debt gates are first, deliberately**, so a debt refusal
+cannot hide behind another gate's reason.
 
-**Four shipped as latches and were fixed:**
-
-1. `CANON-COORD-ROLE` — nothing anywhere wrote a second `mode` row, so the title could be entered and
-   never left.
-2. `CANON-JOURNAL-PHASE` — refused `create_journal`, the exact call it demanded.
-3. **bulk inner ids** — ids returned by `bulk` inner calls never entered the seen set, so
-   `bulk([create_task])` followed by `update_task(<that id>)` was refused for an id the portal had
-   just issued.
-4. **delete-obligation polarity** — seven `delete_*` rows could only be discharged by the id coming
-   *back*, which is proof the delete **failed**.
-
-**Two more were found and designed out before shipping**, both at the debt gates:
-
-5. `CLOSEOUT_CLEARING` — every close-out artifact is itself a portal write, so a gate refusing portal
-   writes until the close-out exists would refuse the close-out.
-6. The `OTHER_GATE_KEYS` **seam** — `CANON-ACCOUNT` publishes `create_journal(tags=["blocked"])` as
-   "you may always stop with an account". A debt gate refusing that call builds a latch **between two
-   individually-safe gates**, which is the kind no single gate's tests would catch.
-
-The rule that came out of it: **every state the ledger can enter needs a key proven to turn**, not
-merely documented. The fourth column is that key as data.
-
-Where the column reads **none needed**, the gate's clearing calls fall outside its own gated set by
-construction — most often because reads are never work, so no gate can refuse the read that clears
-it. That is still a claim the selftest drives, not an assumption.
-
-### Refusals (PreToolUse — the call never runs), in `evaluateCall()` order
-
-**The two debt gates are evaluated first, deliberately**, so a debt refusal can never hide behind
-another gate's reason.
-
-| Gate | Refuses | Clears by | May never refuse | Budget |
-|---|---|---|---|---|
-| **CANON-DEBT-READ-BACK** | the next turn's *work* while an earlier turn's write is still unread. `work = portal write, file write, or mutating command` | the mapped read — `read_board` / `get_task` / `list_tasks`, whichever the write owed | those reads, `create_journal`, and every key in `OTHER_GATE_KEYS` | **3 per distinct debt**, then that debt stands down permanently. 7-day TTL. `run-close` settles it |
-| **CANON-DEBT-CLOSEOUT** | the next turn's *work* while the close-out is unmade | `create_board`, `create_knowledge_graph`, `extract_`, `interpret_`, `create_journal` | the 8 calls in `CLOSEOUT_CLEARING` | same |
-| **CANON-ID** | a portal write carrying an id this session never saw. Candidates come from `harvestArgIds(tool_input)` **only** — never the payload envelope | any `list_*`/`get_*` that returns it, including a `create_*` response; or the owner typing it into the conversation | none needed | none. The old "first 3 tool calls" cold-start grace has been **narrowed so far that it effectively never applies to a normal session** — write as if there is no grace |
-| **CANON-BOTTOM-UP** | `complete_task(X)` before X's subtasks have been listed and each child completed | `list_subtasks(parent_task_id=X)`, then complete the children, then the parent | none needed | none |
-| **CANON-COORD-ROLE** | **any file write or mutating command** while holding the coordinator title. Judged **by effect**, not by tool name: nothing anywhere asks whether the tool is called `Bash`. Portal tools carry an empty `effect`, so **portal writes are not refused here** | `transfer_coordinator_title` — the coordinator counsels and coordinates; it does not implement | `transfer_coordinator_title` | none |
-| **CANON-POLICY-FIRST** | a participant acting before reading the channel | `read_channel_policy` **and** `read_channel_messages` | none needed | none |
-| **CANON-JOURNAL-PHASE** | the first portal write after a phase boundary, unjournalled | `create_journal(folder_id=…)` into the run's journal folder **and** a journal read-back | `create_journal`, `update_journal`, `create_journal_folder` | none |
-| **CANON-KG-DESTRUCTIVE** | `delete_knowledge_graph`, `regenerate_knowledge_graph`, and `generate_knowledge_graph` on a `graph_id` already seen | `extract_knowledge_graph` — the incremental path; or the `ALLOW-KG-REGEN-<run_id>` sentinel, which is preferred over standing the gate down | none needed | none |
-| **CANON-TREE-FIRST** | any write to a project source file before the task tree and flow board exist. **Armed in ALIGN as well as RUN** (`isRun` = state is anything but CLOSED) | one each of `create_task`, `create_subtask`, `create_flow_cluster`, `create_flow_connection` | none needed | none. Exempts `node_modules`, `.git`, build dirs, `*.md`, `*.log`, lockfiles, and any path containing `agent-onboarding` or `management-portal-canon` |
-| **CANON-BOARD-FIRST** | brief / proposal / task writes before the alignment board. The gated set **includes `create_subtask` and `insert_diagram`** | `create_board` + a mermaid block + `read_board` | none needed | **inert once the run is promoted to RUN.** Governs initiation only |
+| Gate | Refuses | Clears by | **Never refuses** (anti-latch key) |
+|---|---|---|---|
+| **CANON-DEBT-READ-BACK** | The **next turn's work** while an earlier turn's write is still unread (`work` = portal write ‖ file write ‖ mutating command). | The mapped read — `read_board` / `get_task` / `list_tasks`. `run-close` settles it outright. | those reads, plus `create_journal`, plus every other gate's clearing key. Budget **3 per distinct debt**, then that debt stands down permanently; 7-day TTL. |
+| **CANON-DEBT-CLOSEOUT** | The **next turn's work** while the run's close-out is unmade. | `create_board` + `create_knowledge_graph` + `extract_` + `interpret_` + `create_journal`. | the 8 in `CLOSEOUT_CLEARING`: `create_board`, `create_board_block`, `create_knowledge_graph`, `add_source_to_knowledge_graph`, `extract_knowledge_graph`, `interpret_knowledge_graph`, `create_journal`, `update_journal`. Same budget. |
+| **CANON-ID** | A portal write carrying an id this session never saw. Candidates come from the call's own arguments only, never from the payload envelope. | Any `list_*`/`get_*` that returns it, or the owner typing it. | — |
+| **CANON-BOTTOM-UP** | `complete_task(X)` when no `list_subtasks(parent_task_id=X)` was read this session, or when a listed child of X has no recorded completion. | `list_subtasks(X)`, then complete the children, then the parent. | — |
+| **CANON-COORD-ROLE** | **Any file write or mutating command** while this session holds the coordinator title. It reads **what the call does** — the file it writes, the program its command line runs — **not which tool carried it**, so `PowerShell` and `bulk` are covered exactly as `Bash` is. Portal tools have an empty effect, so **portal writes are not refused here**. | `transfer_coordinator_title`, or standing this one gate down. | `transfer_coordinator_title` |
+| **CANON-POLICY-FIRST** | In participant mode: the first portal write or file edit before both `read_channel_policy` and `read_channel_messages`. | Read the policy and the messages. | — |
+| **CANON-JOURNAL-PHASE** | In a RUN: the first portal write after a phase boundary, when the journal has not been both written and read back since that boundary. | `create_journal(folder_id=…)` **and** a `get_journal`/`list_journals`/`search_journals` read-back. | `create_journal`, `update_journal`, `create_journal_folder` |
+| **CANON-KG-DESTRUCTIVE** | In a RUN: `delete_knowledge_graph` and `regenerate_knowledge_graph` — **both destroy nodes and edges** — plus `generate_knowledge_graph` on a graph already seen. Deletion destroys strictly more than regeneration and was previously ungated. | `extract_knowledge_graph`, the incremental path; `remove_source_from_knowledge_graph` narrows a graph without destroying it. Owner authorisation is the `ALLOW-KG-REGEN-<run_id>` sentinel, which is preferred over standing the gate down. | — |
+| **CANON-TREE-FIRST** | Any write to a project source file before the task tree and flow board exist (≥1 each of `create_task`, `create_subtask`, `create_flow_cluster`, `create_flow_connection`). **Armed in ALIGN as well as RUN.** | Build the breakdown first. Exempts `node_modules`, `.git`, build dirs, `*.md`, `*.log`, lockfiles, and any path containing `agent-onboarding` or `management-portal-canon`. | — |
+| **CANON-BOARD-FIRST** | While a run is in ALIGN: `update_brief`, `update_brief_field`, `create_proposal`, `add_proposal_phase`, `add_proposal_milestone`, `create_task`, **`create_subtask`** and **`insert_diagram`**. The last two were holes you could drive the whole gate through — build the tree one subtask at a time, or paste the roadmap straight into the proposal, without ever making the board. | `create_board` + a `mermaid` block + `read_board`. **Inert once the run is promoted to RUN.** | — |
 
 ### Compulsions (PostToolUse / Stop — the action already happened)
 
-| Gate | Blocks when | Clears by | May never refuse | Budget |
-|---|---|---|---|---|
-| **CANON-READ-BACK** (PostToolUse) | a portal write left an open obligation | the mapped `get_*`/`list_*` from the write→read map, ideally batched into one `bulk`. **Deletes clear on ABSENCE** — the block text says so | n/a — a PostToolUse block never refuses a call | `POST_BLOCK_CAP = 12` per session, once per turn, plus the dead-man rule: two blocks with no tool call between them and it goes quiet |
-| **CANON-READ-BACK-STOP** (Stop) | read-back obligations are still open at turn end | the same bulk read | n/a | 3 per run |
-| **CANON-ACCOUNT** (Stop) | the run is in RUN, phases remain, and no journal was written this turn | starting the next phase's first real step, **or** `create_journal(tags=["blocked"])` plus a read-back. You may not stop silently; you may always stop with an account | n/a | 3 per run |
-| **CANON-CLOSEOUT** (Stop) | RUN, all phases terminal, and `closeoutMissing()` is non-empty | whichever item the reason names. **When nothing is missing it auto-closes the run** | n/a | 2 per run |
+| Gate | Blocks when | Clears by |
+|---|---|---|
+| **CANON-READ-BACK** | A portal write has no mapped read carrying the same id. Once per turn, 12 per session. **Deletes clear on ABSENCE** — the block text says so, because an id coming *back* after a delete is proof the delete failed. | The mapped read from the write→read map (`reference.md` §3) — ideally one `bulk` of them. |
+| **CANON-ACCOUNT** | A turn is ending with phases remaining and no journal entry written this turn. Budget 3 per run. | Continue into the next phase's first real step, **or** journal what stopped you, tagged `blocked`. You may not stop silently; you may always stop with an account. |
+| **CANON-READ-BACK-STOP** | Read-back obligations are still open at turn end. Budget 3. ⚠ **Not in `REGISTER`** — so it appears on neither the canon card nor `doctor`. | The same bulk read. |
+| **CANON-CLOSEOUT** | All phases are terminal but the summary board, the knowledge-graph closure, or the final journal entry is missing. Budget 2. | Whichever the reason names. When nothing is missing it **auto-closes the run**. |
 
-Exceeding a Stop budget writes `run.degraded[<gate>]`, which makes that gate **permanently advisory
-for that run**. It never comes back on by itself.
-
-`closeoutMissing()` checks seven things: a summary board with at least one block,
-`create_knowledge_graph`, at least 3 distinct source types, `extract_`, `interpret_`, a KG read-back,
-and a journal write **plus** its read.
-
-**KNOWN GAP — `CANON-READ-BACK-STOP` is not in `REGISTER`.** It is a real gate, it blocks, and it can
-be stood down by id like any other. But because it is not a register row it **never appears on the
-canon card and never appears in `doctor` output**. A reader auditing either surface will conclude it
-does not exist. It is listed here so that at least one surface tells the truth; the fix is to give it
-a register row.
+Exceeding a Stop budget writes `run.degraded[gate]` and that gate becomes **permanently advisory for
+that run**. **A Stop gate blocks at most once per turn, by design** — see the honest limits below.
 
 ### Reports (Stop — never blocks)
 
-**CANON-COMPLETE** names phases and milestones with an empty required field, and missing initiation
-items. **CANON-BULK** fires at **3 or more single writes** that should have been one `bulk` call.
-**CANON-STATUS** cross-references milestones whose tasks are all done but whose status was never
-updated.
+**CANON-COMPLETE** names phases/milestones with an empty required field, and missing initiation
+items. **CANON-BULK** counts single writes that should have been one `bulk` call. **CANON-STATUS**
+cross-references milestones whose tasks are all done but whose status was never updated.
 
-These are **advisory by design, not by weakness.** In the words of the first commit: *"a deny on call
-#4 cannot undo calls 1 to 3."* Single calls are sometimes right, and completeness is a judgement
-about content, which no hook can make.
-
-### Scoping — what is even eligible to be gated
-
-- **`PORTAL_TOOLS` is a frozen set of 257 names.** A tool is a portal tool if and only if its raw
-  name matches `^mcp__.+?__(.+)$` and the tail is in that set. **A tool outside the set is never
-  subject to a portal invariant** — that is what keeps Supabase, Desktop_Commander, chrome-devtools
-  and playwright out of the blast radius, on every install spelling, without enumerating spellings in
-  a regex.
-- **`WRITE_READ_MAP` carries 98 write→read rows.** Not the ~60 an older draft of this page implied.
-- **Non-portal tools are judged purely by ARGUMENT SHAPE**: does some key carry a shell command line,
-  does some key name a file about to be written. **Nothing asks whether the tool is called `Bash`.**
-  This is why `PowerShell` and `bulk` used to walk past every name-shaped matcher.
-- `modePre` calls `quiet()` **before touching disk** whenever a call is neither portal nor mutating —
-  which is most calls, and which is why the ungated path costs nothing (see the performance section
-  of `agent-onboarding/CANON-GATES.md`).
-
-### Where the gates hang
-
-Eight distinct hook events, not five: `SessionStart` (registered twice — the canon card and
-watch-alarm's preflight, and both deliver), `UserPromptSubmit`, `PreToolUse`, `PostToolUse`
-(registered twice), `SubagentStart`, `SubagentStop`, `Stop` (registered twice), `SessionEnd`. The
-full registration table with the measured evidence for each is in `agent-onboarding/CANON-GATES.md`.
-
-**Stop ordering matters and is worth knowing here:** watch-alarm's `check` runs **before**
-canon-gate's `stop`, and canon-gate **yields silently if watch-alarm blocked within the last 90
-seconds**. Two gates blocking the same turn would spend the runtime's 9-block budget by accident.
-**Whether the runtime actually guarantees that ordering has not been verified** — the yield is
-written defensively on the assumption it might not.
-
----
-
-## Stop blocks at most once per turn — by design
-
-`stop_hook_active` short-circuits **above** `canBlock`. That is not an oversight to be tightened
-later; **it is the only reason the plugin cannot trap its owner.** The runtime hard-caps consecutive
-Stop blocks at 9 and then ends the turn with an **empty result**, which is a worse outcome than the
-violation.
-
-The leak this leaves is measured and stated plainly in the code:
-
-```
-stop#1 BLOCK → stop#2 SPEAK → stop#3 BLOCK → stop#4 ALLOW
-```
-
-— turn ends with the write unverified and phases remaining.
-
-**So the Stop half delays a violating turn by one exchange. It does not prevent it.**
-
-**That is exactly why the debt gates exist.** The turn is allowed to end, the obligation is written
-down, and the *next* turn's first action answers for it. A Stop gate strong enough to actually
-prevent the violation would be a Stop gate strong enough to hang the session.
+These are **advisory by design, not by weakness.** A deny on the fourth single write cannot undo the
+first three; single calls are sometimes right; and completeness is a judgement about content, which
+no hook can make.
 
 ---
 
@@ -385,21 +256,30 @@ It **cannot** wake a session that is already sitting idle — measured: a coordi
 turn silently mid-run"**, which is enforceable, and **not** as "never stop", which is not. Do not
 blur those two.
 
-**2. CANON-READ-BACK proves a read happened, not that you compared anything.** It proves a mapped
+**2. A Stop gate blocks at most once per turn, and that is deliberate safety.** `stop_hook_active`
+short-circuits above the block check, and it is the only reason this plugin cannot trap its owner:
+the runtime hard-caps consecutive Stop blocks at 9 and then ends the turn with an **empty result**.
+The leak is stated plainly rather than hidden — `stop#1 BLOCK → stop#2 SPEAK → stop#3 BLOCK →
+stop#4 ALLOW`, and the turn ends with the write unverified and phases remaining. **The Stop half
+delays a violating turn by one exchange; it does not prevent it.** That is precisely **why the debt
+gates exist**: the turn may end, the obligation is written down, and the *next* turn's first action
+answers for it. Debt is keyed by **project, not session** — a debt left on Friday refuses the first
+work on Monday, and a debt that evaporated because you opened a new terminal would be the same leak
+wearing a different hat.
+
+**3. CANON-READ-BACK proves a read happened, not that you compared anything.** It proves a mapped
 read ran and returned a record carrying that id. Whether you actually looked at the field you wrote
 is between you and the work.
 
-**3. Gates judge STRUCTURE, never QUALITY.** Asserted verbatim by the selftest: *"They cannot tell
-whether a brief is good."* "A brief exists and was read back" is checkable. "The brief is good" is
-not, and nothing here pretends otherwise.
+**4. Gates judge STRUCTURE, never QUALITY.** "A brief exists and was read back" is checkable. "The
+brief is good" is not, and nothing here pretends otherwise. The selftest asserts it verbatim: *they
+cannot tell whether a brief is good.*
 
-**4. Hooks fail open, and silently.** Crash or timeout means the call proceeds with the model told
-nothing. That is deliberate — a gate that crashes must never be the reason your turn fails — and it
-is why the canon card, `doctor` and `--include-hook-events` exist rather than being extras.
-
-**5. The cold return is deliberate, and it is the point.** Debt is keyed by **project, not session**.
-A debt left on Friday refuses the first work on Monday, in a new terminal, with an empty ledger. A
-debt that evaporates because you opened a new session is the same leak wearing a different hat.
+**5. Hooks fail open.** Crash or timeout ⇒ the call proceeds, silently. That is deliberate — a gate
+that crashes must never be the reason your turn fails — and it is why the canon card and `doctor`
+exist. **A dead gate is indistinguishable from a live one from inside the conversation**, which is
+also why "the gates are armed" above is an out-of-band claim about the shipped files and the
+fixtures, and not something you can confirm by having a quiet session.
 
 **6. On OAuth installs the Stop-time portal read often 401s.** `watch-alarm` returned `http_401`
 seven turns running on this machine. When it fails, the Stop reports fall back to local ledger
@@ -436,11 +316,9 @@ none  →  ALIGN  →  RUN  →  CLOSED
 ```
 
 - **ALIGN** — board-first governs. Stopping for the human is **correct** here. `CANON-BOARD-FIRST`
-  is armed; `CANON-ACCOUNT` is inert; **`CANON-TREE-FIRST` is armed here too** — it arms for any
-  state that is not CLOSED, because source edits before a breakdown are exactly as premature during
-  alignment as during the run.
-- **RUN** — canon (b) governs. `CANON-ACCOUNT` and `CANON-JOURNAL-PHASE` arm, `CANON-TREE-FIRST`
-  stays armed, and **`CANON-BOARD-FIRST` goes inert.**
+  is armed; `CANON-ACCOUNT` is inert.
+- **RUN** — canon (b) governs. `CANON-ACCOUNT`, `CANON-JOURNAL-PHASE` and `CANON-TREE-FIRST` arm;
+  `CANON-BOARD-FIRST` goes inert.
 - **CLOSED** — nothing gates.
 
 That split is the resolution of an apparent contradiction: **board-first governs the initiation of
@@ -458,37 +336,16 @@ someone stands it down, or the run is closed. Mitigated five ways; not removed.
 
 ## The commands
 
-| Command | Carries | Missing arguments |
-|---|---|---|
-| `/portal-project <client> <project> [scope]` | Full initiation: alignment board, brief, proposal, phases, milestones, task tree, flow board, journal folder, knowledge graph. Opens the run in ALIGN. | **Hard stop.** Runs no tool, opens no run, creates nothing |
-| `/portal-continue [run or project]` | Promotes to RUN and resumes autonomously — no confirmation between phases. | **Deliberately does not stop.** Empty is the normal case; it resolves from the project directory |
-| `/channel-coordinate <channel> <identity> [agents…]` | Join as coordinator, claim the title, publish the nine-section channel policy. | **Hard stop.** Registers nothing, claims nothing, posts nothing |
-| `/channel-join <channel> <identity>` | Join as participant: policy and messages first, then the mission. | **Hard stop** |
-| `/portal-stand-down [gate] [reason]` | The escape. | **Inverts the rule.** No gate stands down all; an unrecognised gate prints the list and stands down all |
+| Command | Carries |
+|---|---|
+| `/portal-project <client> <project> [scope]` | Full initiation: alignment board, brief, proposal, phases, milestones, task tree, flow board, journal folder, knowledge graph. Opens the run in ALIGN. |
+| `/portal-continue [run or project]` | Promotes to RUN and resumes autonomously — no confirmation between phases. |
+| `/channel-coordinate <channel> <identity> [agents…]` | Join as coordinator, claim the title, publish the nine-section channel policy. |
+| `/channel-join <channel> <identity>` | Join as participant: policy and messages first, then the mission. |
+| `/portal-stand-down [gate] [reason]` | The escape. |
 
 Command bodies are a **trusted channel** — imperatives there are followed normally. That is exactly
 why the clearing actions live in the commands and on the canon card rather than in refusal reasons.
-
-### The merge trap
-
-**`/portal-stand-down` exists only on `feat/canon-commands`.** On the hooks lane and on master,
-`commands/` holds `portal.md` and `rearm-watch.md` and nothing else.
-
-The string `/portal-stand-down` appears at **four runtime sites**: the SessionStart canon card, and
-the Stop block reasons of `CANON-READ-BACK-STOP`, `CANON-ACCOUNT` and `CANON-CLOSEOUT`. It is
-**never** in a PreToolUse deny reason — that is the facts-only rule holding.
-
-So the failure mode is not "a refusal names a command that does not exist". It is **"the canon card
-and three Stop block reasons publish an escape that does not exist."**
-
-It is **degraded, not total**: all four sites offer the `node … canon-gate.js stand-down` Bash form
-**first**, and that form works standing alone. Shipping hooks without commands therefore ships a
-working escape beside a dangling one — and given that the credibility of the escape text is the
-scarce resource this whole design is spending, a published escape that silently does nothing is
-precisely the failure it exists to prevent.
-
-**Merge order: `feat/canon-commands` before or together with `feat/canon-hooks-enforce`.** Commands
-is safe alone: it adds five files and touches nothing else. Docs last.
 
 ---
 

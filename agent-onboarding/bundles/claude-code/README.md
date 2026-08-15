@@ -3,6 +3,148 @@
 Drop-in onboarding for operating the **management-portal MCP** from Claude Code, with the agent discipline
 baked in. Copy these files into your repo root and set your key.
 
+This file bundle is **one of four working install paths**. If you are not sure which you want, read the
+next section first — the plugin install is easier and brings more, and one of the four paths has a trap
+that is currently the single most common reason a new install cannot connect.
+
+## Install paths — pick one
+
+The plugin is **v1.3.2**, published from the **public** repo
+[`WaelFouda/management-portal-plugin`](https://github.com/WaelFouda/management-portal-plugin) under the
+marketplace name **`portal`**. Public means clients need no repo access to install it.
+
+| | Path | How you install | Does it collect your API key? |
+|---|---|---|---|
+| **A** | **Claude Code Desktop — plugin, no terminal** *(recommended)* | Plugins panel → clicks | ✅ **Yes — it prompts you, and stores the key in your OS keychain.** |
+| **B** | **Claude Code CLI — plugin** | `claude plugin …` in a shell | ❌ **No. It never asks. You must set the key yourself — see B2 below.** |
+| **C** | **Manual `.mcp.json`** (this bundle; also Roo Code, Cursor, VS Code Copilot) | copy files, write the header | You write the key into the file. |
+| **D** | **`claude mcp add`** | one command | You pass the key on the command line. |
+
+> ### ⚠️ The difference that breaks installs: **A prompts for your key. B does not.**
+>
+> Both A and B install the same plugin. Only **A** ever asks you for a key. A **CLI** install substitutes
+> the key variable **without having collected a value**, so the `X-API-Key` header goes out **empty** and
+> every call fails with a generic connection error that looks like the server is down. It is not — you
+> simply never gave it a key. This is a documented Claude Code limitation, closed as *not planned*:
+> [`anthropics/claude-code#39827`](https://github.com/anthropics/claude-code/issues/39827).
+>
+> **If you install from the CLI, do step B2 below.** It is not optional.
+
+## A · Claude Code Desktop — plugin, no terminal (recommended)
+
+The path for a non-technical user. Nothing to edit, no terminal, and it is the **only** path that puts
+your key in the OS keychain instead of a file on disk.
+
+1. **Create your API key** in the web app → **Settings → API Keys → Generate**, and copy it
+   (it looks like `pfk_live_YOUR_KEY`).
+2. In Claude Code, open **Plugins** → **Add marketplace** → **Add from a repository**, and paste:
+
+   ```
+   WaelFouda/management-portal-plugin
+   ```
+
+3. Find **`management-portal`** in the marketplace list → click **Install**.
+4. **Claude Code prompts you for the API key — paste it.** It is stored in your **OS keychain**: not
+   written into a config file, not committed, not readable from your repo.
+5. **Restart Claude Code** (or `/reload-plugins`). Then `/mcp` shows `management-portal` **connected**,
+   and `/portal` is ready.
+
+## B · Claude Code CLI — plugin
+
+```bash
+claude plugin marketplace add WaelFouda/management-portal-plugin
+claude plugin install management-portal@portal
+```
+
+**B2 — set your key. Do this now, before you try to use it.** The two commands above complete
+successfully and tell you nothing is missing, but **they never asked you for a key**, and the plugin has
+no value to substitute into its `X-API-Key` header. Add the value yourself in `~/.claude/settings.json`,
+under `pluginConfigs`:
+
+```json
+{
+  "pluginConfigs": {
+    "management-portal@portal": {
+      "options": {
+        "mcp_api_key": "pfk_live_YOUR_KEY"
+      }
+    }
+  }
+}
+```
+
+It has to be your **user** settings file — `~/.claude/settings.json`. A project-level or local
+`.claude/settings.json` is **ignored** for `pluginConfigs`, so a key put there looks right and does
+nothing.
+
+Then restart Claude Code and run `/mcp` to confirm `management-portal` is **connected**.
+
+If you skip B2, the failure does not say "no API key". It reports a generic connection/authentication
+error that reads like an outage — which is why this step is here, above the first thing you would try,
+and not in a troubleshooting section at the bottom. Prefer not to have a key in a settings file at all?
+Use **path A**, which is the only one that uses the keychain.
+
+## C · Manual `.mcp.json` — this bundle (and Roo Code, Cursor, VS Code Copilot)
+
+A plain MCP server registration with the `X-API-Key` header. It works in **every** MCP client — this is
+exactly what the Roo Code, Cursor and VS Code (Copilot) bundles do, with only the wrapper key and
+transport hint changed:
+
+```json
+{
+  "mcpServers": {
+    "management-portal": {
+      "type": "http",
+      "url": "https://client-management-api-1uk1.onrender.com/mcp",
+      "headers": {
+        "X-API-Key": "pfk_live_YOUR_KEY"
+      }
+    }
+  }
+}
+```
+
+Copying this bundle's files is that registration **plus** the whole discipline as files — see
+**What's in the bundle** and **Install (one screen)** below.
+
+## D · `claude mcp add`
+
+One command, no files to edit — the MCP server only, without the skills, subagents, commands or hooks:
+
+```bash
+claude mcp add --transport http management-portal \
+  https://client-management-api-1uk1.onrender.com/mcp \
+  --header "X-API-Key: pfk_live_YOUR_KEY"
+```
+
+⚠️ **This path does not use the keychain.** `claude mcp add` writes your key in **plaintext** into
+`~/.claude.json`, under
+`projects[<abs path>].mcpServers["management-portal"].headers["X-API-Key"]` — a real file in your home
+directory, readable by anything running as you. Treat it as a secret, never copy it into a repo or a
+support ticket, and rotate the key in **Settings → API Keys** if it leaks.
+
+## What one plugin install brings (paths A and B)
+
+A single install registers all of it — there is **nothing to add to `settings.json` by hand**:
+
+- the **`management-portal` MCP server**;
+- the **`management-portal` skill** (the operating discipline, auto-triggering on portal work);
+- the **`team-chat-reachability` skill** and its **`team-chat-watcher` sub-agent**;
+- the **`portal-operator` sub-agent**;
+- the **`/portal`** and **`/rearm-watch`** commands;
+- the **hooks** — read-after-write, the watch recorder, the session-start preflight, and a **`Stop` hook
+  that arms the ABSENT alarm on install** and fires from the plugin's own `hooks/hooks.json`.
+
+### Upgrading from 1.0.x — two things were renamed
+
+| Old name | New name |
+|---|---|
+| skill `team-chat-watch` | skill **`team-chat-reachability`** |
+| command `/watch-team-chat` | command **`/rearm-watch`** |
+
+If you copied the old bundle by hand, delete the old skill directory and the old command file — a stale
+copy keeps triggering alongside the new one.
+
 ## What's in the bundle
 
 | File | Purpose |
@@ -19,7 +161,10 @@ baked in. Copy these files into your repo root and set your key.
 | `.claude/settings.json` | Hooks: read-after-write on portal writes, the watch **recorder / join-moment** hook, the **preflight** check, and the turn-end **Stop gate**. |
 | `.mcp.json` | MCP server registration for `management-portal` (set your API key). |
 
-## Install (one screen)
+## Install the file bundle (path C, one screen)
+
+The shipped `.mcp.json` carries the placeholder `<YOUR_MCP_API_KEY>`; your real key looks like
+`pfk_live_YOUR_KEY`.
 
 1. **Copy** the bundle contents into your repo **root**, preserving paths:
 

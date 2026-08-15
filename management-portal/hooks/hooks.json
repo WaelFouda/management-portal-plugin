@@ -1,12 +1,72 @@
 {
+  "_comment": [
+    "MATCHERS ARE A FULL MATCH ON THE TOOL NAME, and that is why every matcher here is broad.",
+    "The matcher this file used to carry — mcp__(plugin_management-portal_)?management-portal__... —",
+    "was INERT on any install whose server is named differently: the claude.ai connector registers",
+    "tools as mcp__claude_ai_management-portal__*, and a plain MCP install registers them as",
+    "mcp__<uuid>__*. Neither ever matched, so the hook looked installed and never fired.",
+    "Scoping now happens at RUNTIME in canon-gate.js against a frozen list of the 257 tool names",
+    "this server actually registers, plus — for the file and shell gates only — the SHAPE of the",
+    "call's arguments. A foreign tool is never subject to the PORTAL invariants; it is subject to",
+    "the effect gates exactly when it writes a file or runs a command, and to nothing otherwise.",
+    "",
+    "PreToolUse IS NOW .* AND THAT IS THE POINT. It was Edit|Write|MultiEdit|NotebookEdit|Bash,",
+    "and stock Claude Code on Windows exposes a first-class PowerShell tool that appears in none",
+    "of those five names. Measured: the model created src/bypass.ts inside a gated project, the",
+    "run recorded permission_denials: [], and the debug log contained ZERO Hook PreToolUse entries",
+    "for it. Every name-shaped matcher this plugin has shipped turned out to have a door beside it,",
+    "so there is no longer a name list here at all: everything reaches the gate, and canon-gate.js",
+    "exits before touching the disk for anything that neither writes a file nor runs a command.",
+    "",
+    "PostToolUse is deliberately .* — ids legitimately arrive via Read, Grep, Bash and other MCP",
+    "servers, and `bulk` has to be expanded into its inner calls or canon (f) blinds Gate 1.",
+    "",
+    "Stop runs watch-alarm FIRST (it owns Team Chat reachability and is unchanged), then canon-gate,",
+    "which yields silently if watch-alarm blocked this turn. Two gates blocking one turn is how you",
+    "spend the runtime's 9-consecutive-block budget by accident.",
+    "",
+    "To stand every gate down: node scripts/canon-gate.js stand-down --gate all --reason \"...\"",
+    "or set PORTAL_CANON=off. See the header of canon-gate.js."
+  ],
   "hooks": {
-    "PreToolUse": [
+    "SessionStart": [
       {
-        "matcher": "mcp__(plugin_management-portal_)?management-portal__(create|update|add|complete|insert|reorder|set|delete|promote|attach|approve|reject|log|start|stop|send|react|edit|resolve|remember|register|require|release)_.*",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/portal-gate.js\" pre",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/canon-gate.js\" session-start",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/watch-alarm.js\" preflight",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/canon-gate.js\" prompt",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/canon-gate.js\" pre",
             "timeout": 5
           }
         ]
@@ -14,17 +74,17 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp__(plugin_management-portal_)?management-portal__(create|update|add|complete|insert|reorder|set|delete|promote|attach|approve|reject|log|start|stop|send|react|edit|resolve|remember|register|require|release)_.*",
+        "matcher": ".*",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/portal-gate.js\" post",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/canon-gate.js\" post",
             "timeout": 5
           }
         ]
       },
       {
-        "matcher": "mcp__(plugin_management-portal_)?management-portal__(await_my_turn|start_watching_channel)",
+        "matcher": "mcp__.*__(await_my_turn|start_watching_channel)",
         "hooks": [
           {
             "type": "command",
@@ -34,12 +94,23 @@
         ]
       }
     ],
-    "SessionStart": [
+    "SubagentStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/watch-alarm.js\" preflight",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/canon-gate.js\" subagent-start",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/canon-gate.js\" subagent-stop",
             "timeout": 5
           }
         ]
@@ -52,6 +123,26 @@
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/watch-alarm.js\" check",
             "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/canon-gate.js\" stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/canon-gate.js\" session-end",
+            "timeout": 5
           }
         ]
       }

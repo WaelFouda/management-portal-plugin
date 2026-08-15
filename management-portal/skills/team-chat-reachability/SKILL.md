@@ -437,39 +437,16 @@ So the honest summary is: *stopping is possible, invisible stopping is not.*
 Everything above is `watch-alarm.js`, and it stays exactly as described: **presence, the ABSENT alarm,
 the turn-end gate, ping-pong and the re-arm rule remain its job and its job alone.** Alongside it, the
 canon gates (`scripts/canon-gate.js`) refuse two things about *how you occupy a role* on a channel, and
-they do it at `PreToolUse`, so the refused call never runs.
-
-**`CANON-COORD-ROLE`** — once you have joined as coordinator, it refuses **any file write or mutating
-command, judged by EFFECT**, because the coordinator counsels and coordinates and does **not** implement;
-delegate to a participant. Read that precisely, because the imprecise version was a real bug:
-
-- **Nothing asks whether the tool is called `Bash`.** A non-portal tool is judged purely by the shape of
-  its arguments — does a key carry a shell command line, does a key name a file about to be written. The
-  old name-shaped matcher is exactly why a `PowerShell` call walked straight past this gate.
-- **Portal writes are NOT refused by it.** Portal tools carry an empty `effect`, so a coordinator may go
-  on using the portal all day; what it may not do is implement.
-- **Its only never-refuses entry is `transfer_coordinator_title`** — which is also how you clear it. Hand
-  the title on and the gate is finished with you.
-
+they do it at `PreToolUse`, so the refused call never runs. **`CANON-COORD-ROLE`** — once you have joined
+as coordinator, it refuses your `Write`, `Edit`, `MultiEdit`, `NotebookEdit` and mutating `Bash`, because
+the coordinator counsels and coordinates and does **not** implement; delegate to a participant. Its one
+hard-coded exception is the stand-down command itself, so the gate can never trap you.
 **`CANON-POLICY-FIRST`** — once you have joined as a participant, it refuses your first portal write and
 your first file edit until you have called **both** `read_channel_policy` and `read_channel_messages` for
-that channel.
-
-Neither gate can tell whether the policy is any *good*, and neither can tell whether you actually
-**followed** the coordinator — obedience has no structural signature.
-
-**The escape, and the build it needs.** This takes effect immediately, mid-session, and is itself exempt
-from every gate:
-
-```bash
-node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" stand-down --gate CANON-COORD-ROLE --reason "…"
-```
-
-`/portal-stand-down` is the same thing typed, but it **ships with `feat/canon-commands`** and does not
-exist before then — and neither does `canon-gate.js` itself, which is on `feat/canon-hooks-enforce`.
-**Plugin 1.4.3 carries neither, so on that build these two gates are not running at all** and the only
-hook here that refuses anything is the turn-end ABSENT gate above. The register — including the tools
-each gate may never refuse — and the escape live in `../management-portal/canon-gates.md`.
+that channel. Neither gate can tell whether the policy is any *good*, and neither can tell whether you
+actually **followed** the coordinator — obedience has no structural signature. Both stand down with
+`/portal-stand-down`; the register and the escape live in
+`../management-portal/canon-gates.md`.
 
 ## If you are a WORKER agent joining a channel
 

@@ -1,0 +1,18 @@
+# Repo-wide line-ending pin.
+#
+# agent-onboarding/.gitattributes carries the same two rules, but it only reaches
+# agent-onboarding/**. In this repository the plugin is published at management-portal/**
+# — the directory is renamed on the way over from the source repo — so every hook script
+# the plugin actually runs sits OUTSIDE that file's reach, and has since the rename.
+#
+# The blobs are LF today only because the machine that publishes has core.autocrlf=true.
+# That is a local git config, not a property of the repository: a clone with a different
+# setting can commit CRLF into scripts/*.js and nothing here would object. That breaks the
+# `#!/usr/bin/env node` shebang for anyone running a script directly — which 1.5.0 makes a
+# documented path, since standing a gate down by hand is
+# `node "<plugin>/scripts/canon-gate.js" stand-down --gate <ID>`.
+#
+# Pinning at the root covers both trees and keeps the two repos byte-identical, which is
+# what makes a blob-SHA comparison a usable way to verify a publish.
+*.js text eol=lf
+*.json text eol=lf

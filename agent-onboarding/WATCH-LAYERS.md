@@ -362,9 +362,11 @@ Measured on **Claude Code 2.1.222**, Windows, headless `-p` with `--plugin-dir`.
    `{"hookSpecificOutput":{"hookEventName":"…","additionalContext":"…"}}` reaches the model (on `Stop`,
    also `{"decision":"block","reason":"…"}`, and exit code 2 with the message on stderr). This is **not** a
    `Stop`-only problem, and it had a real casualty: the read-after-write gate was built on `echo "…"`, so
-   it had been firing correctly and reaching **nobody**. It now runs via `scripts/portal-gate.js` and emits
-   `additionalContext`, verified to arrive. Anything a hook needs the model to read must go through
-   `additionalContext`.
+   it had been firing correctly and reaching **nobody**. It was moved to `scripts/portal-gate.js`, which
+   emitted `additionalContext` — but that channel is **still unproven on Pre/PostToolUse** (see
+   `CANON-GATES.md` G4), so the fix may never have landed either. **1.5.0 deletes `portal-gate.js`** and
+   routes the rule through `scripts/canon-gate.js`, which refuses with `permissionDecision` — a channel
+   that *is* proven — rather than relying on text reaching the model at all.
 4. `${CLAUDE_PLUGIN_ROOT}` and `$CLAUDE_PROJECT_DIR` **interpolate correctly** in shell-form hook commands
    on Windows, including paths containing spaces, when the path is wrapped in double quotes.
 5. **A `Stop` hook returning `{"decision":"block","reason":"…"}` really holds the turn open.** The turn did
