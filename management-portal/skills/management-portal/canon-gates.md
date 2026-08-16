@@ -343,6 +343,7 @@ someone stands it down, or the run is closed. Mitigated five ways; not removed.
 | `/channel-coordinate <channel> <identity> [agents…]` | Join as coordinator, claim the title, publish the nine-section channel policy. |
 | `/channel-join <channel> <identity>` | Join as participant: policy and messages first, then the mission. |
 | `/portal-stand-down [gate] [reason]` | The escape. |
+| `/plain-english [what]` | Carries no canon and gates nothing. Re-states the work in plain language for someone who does not work on the code, and holds that register for the rest of the session. It changes how things are said, never what is true — a caveat that would change the reader's decision stays in. |
 
 Command bodies are a **trusted channel** — imperatives there are followed normally. That is exactly
 why the clearing actions live in the commands and on the canon card rather than in refusal reasons.
@@ -364,10 +365,18 @@ acceptance criteria, lessons, moods, reflections, or any prompt or response text
 **The journal is somebody's private account of how their days actually went. The ledger stores that
 a journal entry happened, and never a word of what it said.**
 
-Ledger location: `PORTAL_CANON_HOME`, else the plugin data dir, else
-`~/.claude/plugins/data/management-portal-canon`. Session files are deleted at session end and swept
-after 48h regardless.
+Ledger location: `PORTAL_CANON_HOME`, else the plugin data dir (`CLAUDE_PLUGIN_DATA`), else — from
+1.6.0 — **the live home discovered on disk**, else `~/.claude/plugins/data/management-portal-canon`.
+Session files are deleted at session end and swept after 48h regardless. `doctor` prints both the
+resolved path and **which of those four rules produced it**.
 
-> **Two installs, two ledgers.** `CLAUDE_PLUGIN_DATA` differs between a marketplace install and a
-> `--plugin-dir` run, so the two keep **separate ledgers and cannot see each other's runs**. Set
-> `PORTAL_CANON_HOME` to force one.
+> **Two installs, two ledgers — and the CLI used to be the second install.** `CLAUDE_PLUGIN_DATA` is
+> set for a hook and **unset for a Bash invocation**, and `/portal-continue` opens by running
+> `canon-gate.js run-promote` from Bash. So the run was written to one home while every gate read
+> another, and the card kept saying `no run declared` however many times it was promoted — the
+> command's own first step was a silent no-op. **1.6.0 fixes that**: with no env set, the CLI now
+> finds the home whose `sessions/` was written to most recently instead of assuming a folder name,
+> which matters because a machine can carry several of them under different marketplace names.
+>
+> Two genuinely separate installs (marketplace vs `--plugin-dir`) can still keep separate ledgers.
+> Set `PORTAL_CANON_HOME` in both to force one.

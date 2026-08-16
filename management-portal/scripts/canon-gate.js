@@ -744,6 +744,11 @@ function fold(rows, run) {
 
     if (r.k === 'bulk') {
       st.bulkRuns++;
+      // The coarse channel first (see the `ids` note in modePost). A bulk IS a portal call,
+      // so everything it returned is portal-issued and belongs in seen even when the
+      // per-item split came back empty — which is exactly the state every bulk row written
+      // before this fix is in, and those rows are still on disk being folded.
+      (r.ids || []).forEach((i) => st.seen.add(i));
       for (const it of (r.inner || [])) apply(it.tool, it.ids, it.ok, it.args || {});
       // A write and its mapped read inside ONE bulk open-and-clear together — that is
       // canon (f) being obeyed correctly and must never block.
@@ -1523,7 +1528,10 @@ function modePost(payload) {
   const bare = L.bareToolName(raw);
   const input = payload.tool_input || {};
   const respRaw = payload.tool_response;
-  let resp = typeof respRaw === 'string' ? respRaw : JSON.stringify(respRaw || '');
+  // MUST go through responseText: an MCP tool_response is content blocks, not a string,
+  // and stringifying it escapes every newline — which made the line-anchored bulk item
+  // regex match nothing and emptied `inner` on every bulk row ever written.
+  let resp = L.responseText(respRaw);
   if (resp.length > 65536) resp = resp.slice(0, 65536);
   const ok = !(respRaw && typeof respRaw === 'object' && respRaw.isError);
 
@@ -1547,7 +1555,11 @@ function modePost(payload) {
       v: 1, t, k: 'bulk', s: key, a: agent, tool: 'bulk',
       n: m ? Number(m[2]) : rows.length, ran: m ? Number(m[1]) : rows.filter((r) => r.ok).length,
       failed: m ? Number(m[3]) : rows.filter((r) => !r.ok).length,
-      inner: rows, tu: payload.tool_use_id || null, ms: payload.duration_ms || null,
+      // `ids` is the SAFETY NET, and it is here because its absence is what turned one
+      // parsing bug into three false refusals. Per-item ids are the precise channel; this
+      // is the coarse one that survives any future failure to split the response, so an id
+      // the portal demonstrably returned can never be called unseen again.
+      ids, inner: rows, tu: payload.tool_use_id || null, ms: payload.duration_ms || null,
     });
   } else {
     L.append(key, {
@@ -1963,6 +1975,10 @@ function cliDoctor() {
   const lines = [];
   lines.push('portal-canon doctor');
   lines.push('  CANON_HOME      : ' + L.HOME);
+  // WHY it is that path, not just what it is. A CLI run and a hook run used to resolve two
+  // different homes and each printed its own with equal confidence, so the run existed in
+  // one and every gate looked in the other.
+  lines.push('  resolved via    : ' + L.HOME_SOURCE);
   lines.push('  exists          : ' + fs.existsSync(L.HOME));
   lines.push('  PORTAL_CANON    : ' + (process.env.PORTAL_CANON || '(unset → on)'));
   lines.push('  project dir     : ' + (process.env.CLAUDE_PROJECT_DIR || cwd));

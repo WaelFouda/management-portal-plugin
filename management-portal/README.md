@@ -160,6 +160,11 @@ node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" selftest   # fixture payloads 
 - **Two install paths keep two ledgers.** `CLAUDE_PLUGIN_DATA` differs between a marketplace install and
   a `--plugin-dir` run, so a run opened under one is **invisible** to the other. Set
   **`PORTAL_CANON_HOME`** to the same path in both to force a single ledger.
+  **Fixed in 1.6.0 for the case that actually bit:** `CLAUDE_PLUGIN_DATA` is set for a hook and unset
+  for a Bash call, and `/portal-continue` starts by running `run-promote` from Bash — so the run went
+  to one home and every gate read another, and the card said `no run declared` no matter how many
+  times it was promoted. With no env set the CLI now discovers the live home rather than assuming a
+  folder name. Run `doctor`: it prints the resolved path **and which rule chose it**.
 - **On OAuth installs the one Stop-time portal read frequently returns 401** (`watch-alarm` returned
   `http_401` seven turns running on the author's machine). The turn-end reports then fall back to local
   ledger evidence and **label themselves "local evidence, not a verdict"** rather than pretending. The
@@ -206,6 +211,7 @@ stores that an entry happened and never a word of what it said.**
 | `/portal-project`, `/portal-continue` | Start a disciplined run (client + project as arguments), and resume it without stopping between phases. |
 | `/channel-coordinate`, `/channel-join` | Join a Team Chat channel as coordinator or participant, under a name you choose. |
 | `/portal-stand-down` **command** | **The escape.** Stands one gate — or all of them — down, mid-session. |
+| `/plain-english` **command** | Re-explains the current work in plain language — short, jargon-free, decision-first — and holds that register for the rest of the session. For handing a status to someone who does not work on the code. It changes how things are said, never what is true. |
 | **canon gate hooks** | `PreToolUse` and `PostToolUse` on matcher `.*`, plus `SessionStart`, `UserPromptSubmit`, `SubagentStart`/`SubagentStop`, `Stop` and `SessionEnd` — all routed through `canon-gate.js`, which carries a real `permissionDecision`. **The 1.4.3 `portal-gate.js`, which carried none and could only remind, is deleted.** |
 | `team-chat-reachability` **skill** | Teaches how to stay reachable on a channel watch roster; the re-arm rule. |
 | `team-chat-watcher` **subagent** | The one you **spawn**: the background loop that performs the blocking `await_my_turn` wait. Spawning it is what actually makes you reachable. |

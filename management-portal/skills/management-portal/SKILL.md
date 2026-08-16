@@ -83,8 +83,9 @@ Two things to internalise now:
 
 **The commands** (all take your own names as arguments): `/portal-project <client> <project>` to start a
 disciplined run, `/portal-continue` to promote it and keep going without confirmation between phases,
-`/channel-coordinate <channel> <identity>` and `/channel-join <channel> <identity>` for Team Chat, and
-`/portal-stand-down [gate] [reason]` for the escape.
+`/channel-coordinate <channel> <identity>` and `/channel-join <channel> <identity>` for Team Chat,
+`/portal-stand-down [gate] [reason]` for the escape, and `/plain-english [what]` when the person reading
+needs the state of the work in plain language rather than in yours.
 
 **If a session does not open with `[portal-canon v1 · alive · token …]`, none of the above is running.**
 A dead hook looks exactly like a live one from inside the conversation.

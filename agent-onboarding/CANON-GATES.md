@@ -159,6 +159,11 @@ must stay word-consistent between them.
 - **Two install channels keep two ledgers.** `CLAUDE_PLUGIN_DATA` differs between a marketplace
   install and a `--plugin-dir` run, so a run opened under one is invisible to the other. Set
   `PORTAL_CANON_HOME` to force a single home.
+  **The hook-vs-CLI half of this was measured and fixed in 1.6.0.** `CLAUDE_PLUGIN_DATA` is set for a
+  hook process and unset for a Bash one, and the commands tell the agent to run `canon-gate.js` from
+  Bash — so `run-promote` wrote a run the gates could never see, and the card reported `no run
+  declared` indefinitely. The CLI branch now discovers the live home by evidence (most recently
+  written `sessions/`) instead of assuming a folder name; `doctor` reports which rule was used.
 - **On OAuth installs the Stop-time portal read frequently 401s** — `watch-alarm` returned
   `http_401` seven turns running on this machine. The turn-end reports then fall back to local
   ledger evidence and must label themselves **"local evidence, not a verdict"**.

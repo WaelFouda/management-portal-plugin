@@ -1389,13 +1389,144 @@ function caseDebtHotPath() {
 
 // --- run --------------------------------------------------------------------
 
+function caseGapBulkResponseShape() {
+  console.log('\nGAP a bulk tool_response is CONTENT BLOCKS, not a string');
+  // MEASURED ON A LIVE SESSION, 2026-08-16, and this whole file is why it survived to be
+  // measured there: every fixture above hands post() a plain STRING, which is the one
+  // shape that worked. A real MCP tool_response arrives as content blocks, the old code
+  // stringified anything non-string, and stringifying escapes every newline. RE_BULK_ITEM
+  // is `^`-anchored under /m and needs a REAL newline, so it matched nothing and EVERY
+  // bulk row was written with `inner: []`. Seven such rows in one session, not one id
+  // harvested from any of them, and CANON-ID refused three ids the portal had just
+  // issued — on the batching path the canon itself tells the agent to prefer.
+  //
+  // A gate that refuses ids the portal returned is worse than a gate that is off, so the
+  // assertion below is deliberately about CANON-ID SPECIFICALLY, not about the call being
+  // allowed: a write straight after a write is legitimately answerable by the read-back
+  // gate, and folding those two together is how a test stops meaning anything.
+  const body = 'Ran 2/2 call(s); 0 failed.\n'
+    + '[0] add_proposal_milestone: Milestone added with ID ' + UUID_B + '\n'
+    + '[1] create_task: Created task [id: ' + UUID_C + ']';
+  const calls = { calls: [{ tool: 'add_proposal_milestone', arguments: {} }, { tool: 'create_task', arguments: {} }] };
+
+  for (const [label, resp] of [
+    ['content blocks   ', [{ type: 'text', text: body }]],
+    ['result object    ', { content: [{ type: 'text', text: body }] }],
+    ['split over blocks', [{ type: 'text', text: body.split('\n')[0] }, { type: 'text', text: body.split('\n').slice(1).join('\n') }]],
+    ['plain string     ', body],
+  ]) {
+    const sid = fresh();
+    const p = post(sid, MCP + 'bulk', calls, null);
+    p.tool_response = resp;
+    gate('post', p);
+    const w = gate('pre', pre(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }));
+    check('id created inside a bulk is not called unseen — ' + label,
+      !/CANON-ID/.test(denialOf(w) || ''), denialOf(w) || '');
+    const w2 = gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_C, status: 'done' }));
+    check('bracket-form id in the same bulk is not called unseen — ' + label,
+      !/CANON-ID/.test(denialOf(w2) || ''), denialOf(w2) || '');
+  }
+
+  // The other side: harvesting more must not make CANON-ID toothless.
+  const sid = fresh();
+  const p = post(sid, MCP + 'bulk', { calls: [{ tool: 'create_task', arguments: {} }] }, null);
+  p.tool_response = [{ type: 'text', text: 'Ran 1/1 call(s); 0 failed.\n[0] create_task: Created task [id: ' + UUID_C + ']' }];
+  gate('post', p);
+  const bad = gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A, status: 'done' }));
+  check('a fabricated id after a bulk is STILL refused', /CANON-ID/.test(denialOf(bad) || ''), denialOf(bad) || '');
+}
+
+function caseGapLedgerLineAlwaysParses() {
+  console.log('\nGAP an over-long ledger line must still parse');
+  // readLines() skips any line it cannot JSON.parse, in silence. append() used to shrink
+  // an over-long row with `JSON.stringify(obj).slice(0, 3990)` and patch the tail with
+  // `"}`, which produces valid JSON only by luck — so an over-long row did not arrive
+  // trimmed, it VANISHED. Rows disappearing from the ledger is the same failure class as
+  // the bulk bug above: the gate then refuses honest work for lack of evidence.
+  const os = require('os'), fs = require('fs'), path = require('path');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-append-'));
+  const prev = process.env.PORTAL_CANON_HOME;
+  process.env.PORTAL_CANON_HOME = tmp;
+  delete require.cache[require.resolve('./canon-lib.js')];
+  const L2 = require('./canon-lib.js');
+  const row = {
+    v: 1, t: L2.nowS(), k: 'bulk', s: 'k', a: null, tool: 'bulk', n: 40, ran: 40, failed: 0,
+    ids: Array.from({ length: 80 }, (_, i) => 'aaaaaaaa-bbbb-cccc-dddd-' + String(i).padStart(12, '0')),
+    inner: Array.from({ length: 40 }, (_, i) => ({
+      i, tool: 'create_board_block', ok: true, args: { type: 'mermaid', content: 'x'.repeat(500) },
+      ids: Array.from({ length: 25 }, (_, j) => 'ffffffff-eeee-dddd-cccc-' + String(i * 100 + j).padStart(12, '0')),
+    })),
+  };
+  L2.append('k', row);
+  const raw = fs.readFileSync(path.join(tmp, 'sessions', 'k.jsonl'), 'utf8').trim();
+  let parses = true;
+  try { JSON.parse(raw); } catch (_) { parses = false; }
+  check('an over-long row is written as valid JSON', parses, 'len=' + raw.length + ' tail=' + JSON.stringify(raw.slice(-50)));
+  check('and readLines recovers it rather than dropping it', L2.readLines('k').length === 1);
+  const back = L2.readLines('k')[0] || {};
+  check('the trimmed row still carries its kind and some ids', back.k === 'bulk' && (back.ids || []).length > 0);
+  if (prev === undefined) delete process.env.PORTAL_CANON_HOME; else process.env.PORTAL_CANON_HOME = prev;
+  delete require.cache[require.resolve('./canon-lib.js')];
+}
+
+function caseGapCanonHomeDiscovery() {
+  console.log('\nGAP the CLI and the hooks must resolve the SAME canon home');
+  // MEASURED. CLAUDE_PLUGIN_DATA is set for a hook invocation and UNSET for a CLI one, and
+  // /portal-continue opens by telling the agent to run `canon-gate.js run-promote` from
+  // Bash. So the run was written to one home while every hook read another, and the card
+  // kept reporting "no run declared" however many times it was promoted — the command's
+  // own first step was a silent no-op. Precedence is the regression risk here: the hook
+  // path and the explicit override must both keep behaving exactly as before.
+  const { spawnSync } = require('child_process');
+  const os = require('os'), fs = require('fs'), path = require('path');
+  const LIB = path.join(__dirname, 'canon-lib.js');
+  const ask = (extra) => {
+    const e = Object.assign({}, process.env);
+    delete e.PORTAL_CANON_HOME; delete e.CLAUDE_PLUGIN_DATA;
+    Object.assign(e, extra || {});
+    const r = spawnSync(process.execPath,
+      ['-e', 'process.stdout.write(require(' + JSON.stringify(LIB) + ').HOME)'],
+      { encoding: 'utf8', env: e, timeout: 20000 });
+    return (r.stdout || '').trim();
+  };
+
+  const explicit = path.join(os.tmpdir(), 'canon-explicit-home');
+  check('PORTAL_CANON_HOME still wins over everything',
+    ask({ PORTAL_CANON_HOME: explicit, CLAUDE_PLUGIN_DATA: path.join(os.tmpdir(), 'ignored') }) === explicit);
+
+  const pd = path.join(os.tmpdir(), 'canon-plugin-data');
+  check('CLAUDE_PLUGIN_DATA still resolves to <data>/canon — the hook path is unchanged',
+    ask({ CLAUDE_PLUGIN_DATA: pd }) === path.join(pd, 'canon'));
+
+  const hasSessions = (h) => { try { return fs.readdirSync(path.join(h, 'sessions')).length > 0; } catch (_) { return false; } };
+  const base = path.join(os.homedir(), '.claude', 'plugins', 'data');
+  let live = null;
+  try {
+    for (const d of fs.readdirSync(base)) {
+      for (const h of [path.join(base, d, 'canon'), path.join(base, d)]) if (hasSessions(h)) { live = h; break; }
+      if (live) break;
+    }
+  } catch (_) { /* no plugin data on this machine — covered by the else branch */ }
+
+  const cli = ask({});
+  check('the CLI resolves to a home at all', Boolean(cli));
+  if (live) {
+    check('with no env set the CLI lands on a home that HAS sessions, not an empty sibling',
+      hasSessions(cli), 'resolved to ' + cli);
+  } else {
+    check('with no live home anywhere, the CLI falls back to the default cleanly',
+      cli.endsWith('management-portal-canon'), 'resolved to ' + cli);
+  }
+}
+
 function run() {
   console.log('portal-canon selftest — every gate proved on BOTH sides');
   const cases = [caseSessionStart, caseP1, caseP2, caseP3, caseP3Latch, caseP4, caseP5,
     caseP5Latch, caseKeys, caseP6, caseP7,
     caseP8, caseO1, caseS1, caseNoRepeat, caseBudget, caseEscapes, caseFailSafe, casePrivacy,
     caseLifecycle, caseTools,
-    caseGapShellSurface, caseGapTreeFirstEffect, caseGapBulk, caseGapIdProvenance, caseGapScope,
+    caseGapShellSurface, caseGapTreeFirstEffect, caseGapBulk, caseGapBulkResponseShape,
+    caseGapLedgerLineAlwaysParses, caseGapCanonHomeDiscovery, caseGapIdProvenance, caseGapScope,
     caseDebtReadBack, caseDebtSeams, caseDebtThisTurn, caseDebtCloseout, caseDebtDegrades, caseDebtColdReturn,
     caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath];
   for (const c of cases) {

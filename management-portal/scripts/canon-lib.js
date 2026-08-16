@@ -87,10 +87,63 @@ function normTarget(p) {
 
 function sha1(s) { return crypto.createHash('sha1').update(String(s)).digest('hex'); }
 
+const DEFAULT_HOME = path.join(os.homedir(), '.claude', 'plugins', 'data', 'management-portal-canon');
+
+/**
+ * Find the canon home a HOOK is using, from a process that has no CLAUDE_PLUGIN_DATA.
+ *
+ * MEASURED BUG. `CLAUDE_PLUGIN_DATA` is set for hook invocations and UNSET for a plain CLI
+ * one — and `/portal-continue` opens by telling the agent to run `canon-gate.js run-promote`
+ * from Bash. So the promotion wrote a run to `data/management-portal-canon/runs/` while every
+ * hook read `data/management-portal-inline/canon/`. The two never met: the run existed, the
+ * gates could not see it, and the session card kept saying "no run declared" however many
+ * times it was promoted. The command's own first step was silently a no-op.
+ *
+ * Guessing the folder name is not available: this machine carries THREE of them
+ * (`management-portal-canon`, `-inline`, `-portal`), because the plugin has been installed
+ * under different marketplace names over time. So find it by evidence instead — the home
+ * whose `sessions/` was written to most recently is the one the hooks are live in.
+ *
+ * This runs ONLY on the CLI branch, never when CLAUDE_PLUGIN_DATA is set, so it adds nothing
+ * to the hook hot path. Returns null when there is no evidence either way.
+ */
+function discoverHome() {
+  try {
+    const base = path.join(os.homedir(), '.claude', 'plugins', 'data');
+    let best = null;
+    for (const entry of fs.readdirSync(base)) {
+      // Both layouts are real and both are on this machine: `<data>/<name>/canon/sessions`
+      // (set via CLAUDE_PLUGIN_DATA) and `<data>/<name>/sessions` (the default home).
+      for (const home of [path.join(base, entry, 'canon'), path.join(base, entry)]) {
+        let names;
+        try { names = fs.readdirSync(path.join(home, 'sessions')); } catch (_) { continue; }
+        let newest = 0;
+        // Capped: a long run can leave a lot of shards, and this is a startup path.
+        for (const n of names.slice(0, 200)) {
+          try {
+            const m = fs.statSync(path.join(home, 'sessions', n)).mtimeMs;
+            if (m > newest) newest = m;
+          } catch (_) { /* a shard racing us is not worth failing over */ }
+        }
+        if (newest && (!best || newest > best.newest)) best = { home, newest };
+      }
+    }
+    return best ? best.home : null;
+  } catch (_) { return null; }
+}
+
+// HOW the home was chosen, for `doctor`. Printing the path alone is what let the split go
+// unnoticed: two processes printed two different paths and neither said why, so the output
+// looked equally plausible either way.
+let HOME_SOURCE = 'default';
+
 function canonHome() {
-  if (process.env.PORTAL_CANON_HOME) return process.env.PORTAL_CANON_HOME;
-  if (process.env.CLAUDE_PLUGIN_DATA) return path.join(process.env.CLAUDE_PLUGIN_DATA, 'canon');
-  return path.join(os.homedir(), '.claude', 'plugins', 'data', 'management-portal-canon');
+  if (process.env.PORTAL_CANON_HOME) { HOME_SOURCE = 'PORTAL_CANON_HOME (explicit)'; return process.env.PORTAL_CANON_HOME; }
+  if (process.env.CLAUDE_PLUGIN_DATA) { HOME_SOURCE = 'CLAUDE_PLUGIN_DATA (hook runtime)'; return path.join(process.env.CLAUDE_PLUGIN_DATA, 'canon'); }
+  const found = discoverHome();
+  if (found) { HOME_SOURCE = 'discovered (most recent sessions/)'; return found; }
+  HOME_SOURCE = 'default (nothing else resolved)';
+  return DEFAULT_HOME;
 }
 
 const HOME = canonHome();
@@ -150,8 +203,25 @@ function append(key, obj) {
       if (Array.isArray(obj.ids) && obj.ids.length > 20) obj.ids = obj.ids.slice(0, 20);
       if (obj.inner && obj.inner.length > 20) obj.inner = obj.inner.slice(0, 20);
       obj.trunc = 1;
-      line = JSON.stringify(obj).slice(0, 3990);
-      if (!line.endsWith('}')) line = line + '"}';
+      line = JSON.stringify(obj);
+      // SHRINK STRUCTURALLY, NEVER BY SLICING THE SERIALISED LINE. The old code did
+      // `JSON.stringify(obj).slice(0, 3990)` and patched the tail with `"}`, which does
+      // not produce valid JSON except by luck — and readLines() drops an unparseable line
+      // in silence, so an over-long row vanished entirely instead of arriving trimmed.
+      // Whole rows disappearing from the ledger is precisely the class of bug that makes
+      // a gate refuse honest work, so this now discards fields in order of expendability
+      // and re-serialises, and the line it writes always parses.
+      if (line.length > 4000 && obj.inner) {
+        obj.inner = obj.inner.map((r) => ({ i: r.i, tool: r.tool, ok: r.ok, ids: (r.ids || []).slice(0, 8) }));
+        line = JSON.stringify(obj);
+      }
+      if (line.length > 4000 && obj.args) { delete obj.args; line = JSON.stringify(obj); }
+      if (line.length > 4000 && Array.isArray(obj.ids)) { obj.ids = obj.ids.slice(0, 8); line = JSON.stringify(obj); }
+      if (line.length > 4000 && obj.inner) { delete obj.inner; line = JSON.stringify(obj); }
+      if (line.length > 4000) {
+        // Last resort: a minimal row that still carries what the fold reads.
+        line = JSON.stringify({ v: obj.v, t: obj.t, k: obj.k, s: obj.s, a: obj.a, tool: obj.tool, ok: obj.ok, ids: (obj.ids || []).slice(0, 8), trunc: 1 });
+      }
     }
     fs.appendFileSync(sessionFile(key), line + '\n', 'utf8');
   } catch (_) { /* the ledger is an optimisation; losing a line must never break a turn */ }
@@ -657,6 +727,41 @@ function bareToolName(raw) {
 const RE_BULK_ITEM = /^\[(\d+)\]\s+(?:([A-Za-z0-9_]+):\s*)?([\s\S]*?)$/gm;
 
 /**
+ * The TEXT of a tool_response, with its line breaks intact.
+ *
+ * MEASURED BUG, and it silently emptied every bulk row in the ledger. `tool_response`
+ * for an MCP call is NOT a string — it arrives as content blocks, and the old
+ * `JSON.stringify(resp)` fallback turned every real newline into the two characters
+ * `\` `n`. RE_BULK_ITEM is anchored with `^` under /m, which needs a REAL newline, so it
+ * matched nothing and `parseBulkResponse` returned []. Seven bulk rows this session, all
+ * `inner: []`, so not one id the portal issued inside a `bulk` ever reached the seen set
+ * and CANON-ID refused ids it had just handed out — three times in one session.
+ *
+ * Stringify is kept only as the last resort for a shape with no text in it at all.
+ */
+function responseText(resp) {
+  if (resp === null || resp === undefined) return '';
+  if (typeof resp === 'string') return resp;
+  const parts = [];
+  const walk = (n, d) => {
+    if (n === null || n === undefined || d > 6) return;
+    if (typeof n === 'string') { parts.push(n); return; }
+    if (typeof n === 'number' || typeof n === 'boolean') { parts.push(String(n)); return; }
+    if (Array.isArray(n)) { for (const x of n) walk(x, d + 1); return; }
+    if (typeof n === 'object') {
+      // An MCP content block carries the whole payload on `.text`; take it and stop, so
+      // sibling metadata keys cannot interleave junk between the numbered items.
+      if (typeof n.text === 'string') { parts.push(n.text); return; }
+      for (const k of Object.keys(n)) walk(n[k], d + 1);
+    }
+  };
+  walk(resp, 0);
+  const joined = parts.join('\n');
+  if (joined) return joined;
+  try { return JSON.stringify(resp); } catch (_) { return ''; }
+}
+
+/**
  * Parse a bulk tool_response into per-item {i, tool, ok, ids}.
  *
  * Item shapes emitted by backend/routers/mcp_server.py:_handle_bulk —
@@ -669,7 +774,12 @@ const RE_BULK_ITEM = /^\[(\d+)\]\s+(?:([A-Za-z0-9_]+):\s*)?([\s\S]*?)$/gm;
 function parseBulkResponse(text, inputCalls) {
   const out = [];
   if (!text) return out;
-  const s = typeof text === 'string' ? text : JSON.stringify(text);
+  let s = responseText(text);
+  // Second line of defence for the same failure: if something upstream still hands us an
+  // escaped blob, un-escape it rather than silently parsing zero items. A bulk row that
+  // reports no inner calls is indistinguishable from a bulk that did nothing, which is
+  // why this failed silently for so long.
+  if (s.indexOf('\n') === -1 && s.indexOf('\\n') !== -1) s = s.replace(/\\r\\n|\\n/g, '\n');
   const body = s.length > RESP_SCAN_CAP ? s.slice(0, RESP_SCAN_CAP) : s;
   let m;
   RE_BULK_ITEM.lastIndex = 0;
@@ -937,11 +1047,11 @@ function readStdin(cb) {
 }
 
 module.exports = {
-  normPath, normTarget, sha1, HOME, DIR_SESSIONS, DIR_RUNS, DIR_BYPROJ, ensureDirs, projHash, nowS,
+  normPath, normTarget, sha1, HOME, HOME_SOURCE, DIR_SESSIONS, DIR_RUNS, DIR_BYPROJ, ensureDirs, projHash, nowS,
   sessionKey, sessionFile, append, readLines, readFamily,
   harvestSeen, harvestArgIds, idShape, safeArgs, bareToolName,
   shellStrings, shellSegments, shellMutation, shellWriteTargets, argWriteTargets, writeTargets,
-  parseBulkResponse, bulkInnerNames,
+  parseBulkResponse, bulkInnerNames, responseText,
   sentinel, canonMode, gateArmed,
   resolveRun, saveRun, openRun, closeRun, spendBlock, blocksSpent, runFile, pointerFile,
   debtFile, readDebt, writeDebt, clearDebt,
