@@ -32,7 +32,7 @@ key to create, paste or store. The plugin ships no `userConfig` prompt, and its 
 
 ---
 
-# The canon gates (1.6.3) — READ THE ESCAPE FIRST
+# The canon gates (1.6.4) — READ THE ESCAPE FIRST
 
 1.5.0 turns parts of the agent discipline from **reminders** into **hooks that refuse**. Before anything
 else, here is how to turn them off, because someone reading this section is usually reading it because
@@ -75,7 +75,7 @@ per session, a dead-man rule that disarms any gate blocking twice with no tool c
 24-hour no-progress TTL that closes an abandoned run. A stuck session un-sticks itself even if nobody
 finds this page.
 
-**From 1.6.1 the per-run budget is REFUNDED BY PROGRESS** — a milestone delivered or approved, or a phase
+**From 1.6.1 the per-run budget is REFUNDED BY PROGRESS, and from 1.6.4 by a NEW SESSION too** — a milestone delivered or approved, or a phase
 completed. It used to be monotonic, which meant a run lasting a working day lost `CANON-ACCOUNT` by
 mid-morning and never got it back, and the owner ended up doing the gate's job by hand. A genuinely stuck
 run still exhausts its three and cannot be trapped; a run that is visibly moving keeps its net.
@@ -107,7 +107,7 @@ graph closure and final journal (`CANON-CLOSEOUT`).
 deny on the fourth single write cannot undo the first three), status discipline (`CANON-STATUS`), and
 completeness (`CANON-COMPLETE` — which names empty **fields** and never judges what is written in them).
 
-> ### ⚠️ Status, as of plugin 1.6.3 — three gates verified live, the rest armed
+> ### ⚠️ Status, as of plugin 1.6.4 — three gates verified live, the rest armed
 >
 > **The engine ships.** `scripts/canon-gate.js` is present, 2062 lines, emits a real `PreToolUse`
 > `permissionDecision: "deny"`, and `hooks/hooks.json` wires it into 8 of the 11 hook entries. The
@@ -181,6 +181,11 @@ node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" selftest   # fixture payloads 
   like a write, which is the `CANON-COORD-ROLE` premise too. Quoted spans are now masked before the
   operator is located, while a genuinely quoted target — `> "my file.txt"` — is still read correctly.
 
+- **And a RESTART did not restore it either — fixed in 1.6.4.** The run outlives the session, so a run that
+  spent its three blocks in the morning carried a silenced `CANON-ACCOUNT` through every restart for the rest
+  of the day. A new session now refunds the budget. Safe, because the hazard the cap exists for cannot cross
+  that boundary: a gate stuck in a refuse-loop is stuck within one session's tool stream, and a restart ends
+  that stream.
 - **A long run used to lose its safety net permanently — fixed in 1.6.1, and worth knowing why.** Each
   gate has a per-run block budget (3), after which it degrades to a notice so it can never trap a session
   that genuinely cannot proceed. That counter was monotonic, so on a run lasting a working day
@@ -480,7 +485,7 @@ remember.
 > ```
 >
 > Then **reload** (`/reload-plugins`) or restart Claude Code, and **verify before you trust it**: run
-> `/plugin` and confirm the installed version reads **1.6.3**. If it does not, you are running older code
+> `/plugin` and confirm the installed version reads **1.6.4**. If it does not, you are running older code
 > no matter what the repository says.
 >
 > **This is per machine.** A bump reaches nobody until each machine updates.

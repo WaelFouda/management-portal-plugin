@@ -991,6 +991,21 @@ function modeSessionStart(payload) {
   L.sweep();
   const key = L.sessionKey(payload);
   const run = L.resolveRun(payload.cwd);
+  // A NEW SESSION REFUNDS THE BLOCK BUDGET.
+  //
+  // Each gate degrades to a notice after 3 blocks so it can never trap a session that
+  // genuinely cannot proceed. 1.6.1 made real progress refund that budget, which fixed
+  // the common case. This is the case it did not cover: the run outlives the session, so
+  // a run that spent its three in the morning carried a silenced CANON-ACCOUNT through
+  // every restart for the rest of the day. Measured — a run reached the evening with the
+  // one gate whose job is refusing a silent stop still switched off from hours earlier,
+  // and the owner was doing its job by hand.
+  //
+  // Safe, because the hazard the cap exists for cannot cross this boundary: a gate stuck
+  // in a refuse-loop is stuck WITHIN a session's tool stream, and a restart ends that
+  // stream. A fresh session is a fresh context and gets a fresh net; a session that then
+  // genuinely wedges still exhausts its own three and cannot be trapped.
+  L.creditProgress(run);
   const token = require('crypto').randomBytes(3).toString('hex');
   L.append(key, {
     v: 1, t: L.nowS(), k: 'hello', s: key, a: payload.agent_id || null,

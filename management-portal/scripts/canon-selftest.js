@@ -1530,6 +1530,47 @@ function caseGapTreeSurvivesTheSession() {
     /CANON-TREE-FIRST/.test(denialOf(other) || ''), (denialOf(other) || '').slice(0, 140));
 }
 
+function caseGapSessionRefundsTheBudget() {
+  console.log('\nGAP a new session refunds the block budget');
+  // 1.6.1 made PROGRESS refund the per-gate block budget, which covered the common case.
+  // This is the case it missed: the run outlives the session. A run that spent its three
+  // blocks in the morning carried a silenced CANON-ACCOUNT — the gate whose only job is
+  // refusing a silent stop mid-run — through every restart for the rest of the day.
+  // Measured on a live run that reached the evening with it still off from hours earlier.
+  const fs = require('fs'), path = require('path');
+  const sid = fresh();
+  const open = cli(['run-open', '--client', 'C', '--project', 'P', '--state', 'RUN']);
+  const runId = ((open.stdout || '') + (open.stderr || '')).match(/r-[0-9a-f]+/);
+  check('(precondition) a run was opened', Boolean(runId), open.stdout || open.stderr || '');
+  if (!runId) return;
+  const file = path.join(HOME, 'runs', runId[0] + '.json');
+
+  const spend = () => {
+    const r = JSON.parse(fs.readFileSync(file, 'utf8'));
+    r.blocks = { 'CANON-ACCOUNT': 3 };
+    r.degraded = { 'CANON-ACCOUNT': 'block budget of 3 exhausted in this run' };
+    fs.writeFileSync(file, JSON.stringify(r));
+  };
+  spend();
+  check('(precondition) the budget reads as exhausted', /exhausted/.test(fs.readFileSync(file, 'utf8')));
+
+  // A NEW session id, but deliberately the SAME project directory — `fresh()` would mint
+  // a new PROJ and resolve a different run, which would prove nothing.
+  gate('session-start', { session_id: sid + '-restarted', cwd: PROJ, hook_event_name: 'SessionStart' });
+
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+  check('a new session clears the degraded gate',
+    !after.degraded || !after.degraded['CANON-ACCOUNT'], JSON.stringify(after.degraded || {}));
+  check('and clears the spent-block counter',
+    !after.blocks || !after.blocks['CANON-ACCOUNT'], JSON.stringify(after.blocks || {}));
+
+  // The cap must still work WITHIN a session — a wedged gate cannot be un-trappable.
+  spend();
+  const still = JSON.parse(fs.readFileSync(file, 'utf8'));
+  check('the cap still applies inside one session',
+    Boolean(still.degraded && still.degraded['CANON-ACCOUNT']));
+}
+
 function caseGapQuotedAngleIsNotARedirect() {
   console.log('\nGAP a `>` inside quotes is a comparison, not a redirection');
   // MEASURED. `node -e '... Date.now() - mtime > 3600000 ...'` was REFUSED by
@@ -1770,7 +1811,7 @@ function run() {
     caseP8, caseO1, caseS1, caseNoRepeat, caseBudget, caseEscapes, caseFailSafe, casePrivacy,
     caseLifecycle, caseTools,
     caseGapShellSurface, caseGapTreeFirstEffect, caseGapBulk, caseGapBulkResponseShape,
-    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapProgressKeepsTheNetUp, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
+    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
     caseGapIdProvenance, caseGapScope,
     caseDebtReadBack, caseDebtSeams, caseDebtThisTurn, caseDebtCloseout, caseDebtDegrades, caseDebtColdReturn,
     caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath];

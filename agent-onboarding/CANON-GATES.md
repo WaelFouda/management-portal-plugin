@@ -170,6 +170,9 @@ must stay word-consistent between them.
   write. It refused a read-only diagnostic, and because the same scan answers "does this command change
   state", it also mis-classified read-only commands as mutating. Quoted spans are masked before the
   operator is located; a quoted redirect TARGET is still resolved.
+- **A restart did not restore the budget either — fixed in 1.6.4.** The run outlives the session, so the
+  silenced gate survived every restart for the rest of the day. A new session now refunds it; a session that
+  then genuinely wedges still exhausts its own three and cannot be trapped.
 - **A gate that budgets its own blocks can go silent for good — fixed in 1.6.1.** Every gate degrades to
   a notice after 3 blocks in a run, so it can never trap a session that genuinely cannot proceed. The
   counter was per-run and monotonic, so a run lasting a working day lost `CANON-ACCOUNT` by mid-morning

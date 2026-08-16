@@ -65,7 +65,7 @@ carries one of exactly four states, and **no state is ever quietly rounded up to
 | **ADVISORY** | Verified to only inject text. It can be ignored, and sometimes should be. |
 | **PENDING** | Neither the code nor the evidence. The design exists; nothing else does. Treat as advisory until proven. |
 
-### As of 2026-08-14 — plugin 1.5.0, the engine has merged and ships
+### As of 2026-08-16 — plugin 1.6.4, three gates are ENFORCED and the first refusals were WRONG
 
 **The engine ships.** `scripts/canon-gate.js` is present, 2062 lines, and emits a real `PreToolUse`
 `hookSpecificOutput.permissionDecision: "deny"`. `hooks/hooks.json` holds **11 hook entries**, and
@@ -76,16 +76,23 @@ other three. The advisory `portal-gate.js` that canon-gate replaces has been **d
 | Rule | Verdict | **Status** |
 |---|---|---|
 | Team Chat turn-end ABSENT gate (`watch-alarm.js`) | refuses to end a turn | **ENFORCED** — shipping since 1.4.x, `decision: block`, verified on 2.1.222 and 2.1.85 |
-| Every canon gate in the register below | refuses / blocks / advises | **ARMED** — shipped, wired, fixture-verified. **No live refusal has been observed against this merged build.** |
+| `CANON-ID`, `CANON-READ-BACK`, `CANON-BOTTOM-UP` | refuses / blocks | **ENFORCED** — observed refusing real calls in a live session on 2026-08-16. See the correction below: the first `CANON-ID` refusals were **false**. |
+| Every other canon gate in the register below | refuses / blocks / advises | **ARMED** — shipped, wired, fixture-verified by 374 assertions. No live refusal observed for these. |
 | The 1.4.3 read-after-write reminders (`portal-gate.js`) | reminder only | **GONE** — the file is deleted in 1.5.0. See "What 1.4.3 did" below |
 
-**Say this precisely, because the two halves are different claims.** What changed is that the
-engine **shipped**: the old status line — "the engine lane has not pushed `canon-gate.js`" — is now
-false, and the register below is a description of code that exists rather than a design contract.
-What has **not** changed is that **nobody has driven this merged tree with `claude -p` and watched a
-canon gate refuse a live call.** So the honest sentence is *"the gates ship and are armed; they are
-fixture-verified, not verified here"* — **not** *"the gates are verified and working."* Rounding
-ARMED up to ENFORCED would waste the whole reason this board exists.
+**The correction that matters more than the promotion.** Three gates are now ENFORCED, and the first live
+refusals `CANON-ID` produced were **wrong**. 1.5.0 read a `bulk` tool response as a string when it is really
+content blocks, so every id returned inside a batch was dropped from the seen-id ledger and the gate refused
+ids the server had just issued — on the batching path the canon itself tells the agent to prefer. Five more
+defects of the same family followed, each found by USING the gates rather than reading them: a read-back that
+could not be discharged for a long listing, a uuid FRAGMENT harvested as a phantom subtask that made
+`CANON-BOTTOM-UP` unclearable, an over-long ledger row that vanished instead of arriving trimmed, a `>` inside
+quotes read as a file redirection, and a block budget that switched `CANON-ACCOUNT` off for a whole day.
+
+**A gate that refuses honest work is worse than a gate that is off**, because it is believed. That is why the
+promotion to ENFORCED is written here alongside the defects rather than on its own — the evidence that they
+fire is the same evidence that they fired wrongly, and reporting only the first half would be the exact
+failure this board exists to prevent.
 
 **What the evidence actually covers.** `canon-gate.js`, `canon-lib.js`, `canon-selftest.js` and
 `hooks/hooks.json` merged **byte-for-byte unchanged** from the engine lane (`git diff 8666e28 HEAD`
@@ -229,7 +236,7 @@ cannot hide behind another gate's reason.
 | Gate | Blocks when | Clears by |
 |---|---|---|
 | **CANON-READ-BACK** | A portal write has no mapped read carrying the same id. Once per turn, 12 per session. **Deletes clear on ABSENCE** — the block text says so, because an id coming *back* after a delete is proof the delete failed. | The mapped read from the write→read map (`reference.md` §3) — ideally one `bulk` of them. |
-| **CANON-ACCOUNT** | A turn is ending with phases remaining and no journal entry written this turn. Budget 3 per run, **refunded by progress since 1.6.1**. | Continue into the next phase's first real step, **or** journal what stopped you, tagged `blocked`. You may not stop silently; you may always stop with an account. |
+| **CANON-ACCOUNT** | A turn is ending with phases remaining and no journal entry written this turn. Budget 3 per run, **refunded by progress since 1.6.1 and by a new session since 1.6.4**. | Continue into the next phase's first real step, **or** journal what stopped you, tagged `blocked`. You may not stop silently; you may always stop with an account. |
 | **CANON-READ-BACK-STOP** | Read-back obligations are still open at turn end. Budget 3. ⚠ **Not in `REGISTER`** — so it appears on neither the canon card nor `doctor`. | The same bulk read. |
 | **CANON-CLOSEOUT** | All phases are terminal but the summary board, the knowledge-graph closure, or the final journal entry is missing. Budget 2. | Whichever the reason names. When nothing is missing it **auto-closes the run**. |
 
