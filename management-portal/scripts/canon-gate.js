@@ -1333,11 +1333,15 @@ function evaluateCall(ctx, c) {
       const n = L.normTarget(target.path).value || '';
       if (!projDir || !n || !n.startsWith(projDir)) continue;
       if (TREE_FIRST_EXEMPT.test(n)) continue;
+      // Evidence from EITHER this session's stream or the run's own record. The run
+      // outlives the session; requiring the session to have witnessed it is what refused
+      // every write after a restart, and every write by a sub-agent.
+      const rt = (run && run.tree) || {};
       const miss = [];
-      if (!st.tree.task) miss.push('create_task');
-      if (!st.tree.subtask) miss.push('create_subtask');
-      if (!st.tree.cluster) miss.push('create_flow_cluster');
-      if (!st.tree.connection) miss.push('create_flow_connection');
+      if (!st.tree.task && !rt.task) miss.push('create_task');
+      if (!st.tree.subtask && !rt.subtask) miss.push('create_subtask');
+      if (!st.tree.cluster && !rt.cluster) miss.push('create_flow_cluster');
+      if (!st.tree.connection && !rt.connection) miss.push('create_flow_connection');
       if (!miss.length) break;
       return { gate: 'CANON-TREE-FIRST', reason:
         '[portal-canon CANON-TREE-FIRST] Refused. This ' + c.raw + ' call writes ' + target.path
@@ -1562,6 +1566,15 @@ function modePost(payload) {
       ids: it.ids,
       args: L.safeArgs((calls[it.i] && (calls[it.i].arguments || calls[it.i].args)) || {}),
     }));
+    // A decomposition built with `bulk` — which canon (f) tells the agent to prefer — must
+    // credit the run exactly as the single-call path does.
+    {
+      const TREE_TOOLS = { create_task: 'task', create_subtask: 'subtask',
+                           create_flow_cluster: 'cluster', create_flow_connection: 'connection' };
+      for (const r0 of rows) {
+        if (r0.ok !== false && TREE_TOOLS[r0.tool]) L.creditTree(L.resolveRun(payload.cwd), TREE_TOOLS[r0.tool]);
+      }
+    }
     const m = resp.match(/Ran\s+(\d+)\/(\d+)\s+call\(s\);\s*(\d+)\s+failed/);
     L.append(key, {
       v: 1, t, k: 'bulk', s: key, a: agent, tool: 'bulk', idh: L.harvestIdHeads(resp),
@@ -1578,6 +1591,13 @@ function modePost(payload) {
       v: 1, t, k: 'post', s: key, a: agent, tool: bare || raw, raw, ok, ids, idh: L.harvestIdHeads(resp),
       args: L.safeArgs(input), tu: payload.tool_use_id || null, ms: payload.duration_ms || null,
     });
+    // The decomposition is a durable fact about the RUN, not about this session. Recorded
+    // here so it survives a restart and is visible to a sub-agent, whose own tool stream
+    // never contains portal writes — see creditTree.
+    const TREE_TOOLS = { create_task: 'task', create_subtask: 'subtask',
+                         create_flow_cluster: 'cluster', create_flow_connection: 'connection' };
+    if (ok && TREE_TOOLS[bare]) L.creditTree(L.resolveRun(payload.cwd), TREE_TOOLS[bare]);
+
     // Phase boundaries drive CANON-JOURNAL-PHASE and CANON-ACCOUNT.
     //
     // BOTH MILESTONE TOOLS COUNT. This watched `update_milestone_status` alone, but the

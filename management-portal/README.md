@@ -32,7 +32,7 @@ key to create, paste or store. The plugin ships no `userConfig` prompt, and its 
 
 ---
 
-# The canon gates (1.6.2) — READ THE ESCAPE FIRST
+# The canon gates (1.6.3) — READ THE ESCAPE FIRST
 
 1.5.0 turns parts of the agent discipline from **reminders** into **hooks that refuse**. Before anything
 else, here is how to turn them off, because someone reading this section is usually reading it because
@@ -107,7 +107,7 @@ graph closure and final journal (`CANON-CLOSEOUT`).
 deny on the fourth single write cannot undo the first three), status discipline (`CANON-STATUS`), and
 completeness (`CANON-COMPLETE` — which names empty **fields** and never judges what is written in them).
 
-> ### ⚠️ Status, as of plugin 1.6.2 — three gates verified live, the rest armed
+> ### ⚠️ Status, as of plugin 1.6.3 — three gates verified live, the rest armed
 >
 > **The engine ships.** `scripts/canon-gate.js` is present, 2062 lines, emits a real `PreToolUse`
 > `permissionDecision: "deny"`, and `hooks/hooks.json` wires it into 8 of the 11 hook entries. The
@@ -163,6 +163,16 @@ node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" selftest   # fixture payloads 
 ```
 
 ## Known failure modes — named, not hidden
+
+- **A restart, or a sub-agent, lost the decomposition — fixed in 1.6.3.** `CANON-TREE-FIRST` counted the
+  four decomposition calls in the SESSION's tool stream, but a run outlives a session. Restart Claude
+  Code mid-run and a task tree built an hour earlier became invisible: every source write was refused,
+  with the reason insisting the run had "no recorded `create_task`" while the tasks sat in the portal.
+  It was worse for sub-agents, which is how it surfaced — three lanes blocked at once. A fresh
+  sub-agent's stream contains no portal writes at all, and **must not**, because the canon explicitly
+  says to keep portal writes in the parent session. The canon asked for something it then refused to
+  accept. The decomposition is now recorded on the RUN, so it survives a restart and is visible to a
+  sub-agent; a run that genuinely has no tree is still refused.
 
 - **A `>` inside quotes was read as a redirection — fixed in 1.6.2.** `node -e '... a - b > 3600000 ...'`
   was refused by `CANON-TREE-FIRST` as *"writes 3600000 (via a redirection)"*. The `>` is a comparison
@@ -470,7 +480,7 @@ remember.
 > ```
 >
 > Then **reload** (`/reload-plugins`) or restart Claude Code, and **verify before you trust it**: run
-> `/plugin` and confirm the installed version reads **1.6.2**. If it does not, you are running older code
+> `/plugin` and confirm the installed version reads **1.6.3**. If it does not, you are running older code
 > no matter what the repository says.
 >
 > **This is per machine.** A bump reaches nobody until each machine updates.

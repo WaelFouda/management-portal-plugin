@@ -156,6 +156,15 @@ must stay word-consistent between them.
 - **`bypassPermissions` makes a deny the only brake.** In an autonomous run there is no permission
   UI to override a gate — which is exactly why the primary escape is a **file** re-read on every
   invocation, not a flag fixed at session start.
+- **A restart, or a sub-agent, lost the decomposition — fixed in 1.6.3.** `CANON-TREE-FIRST` counted the
+  four decomposition calls in the SESSION's tool stream, but a run outlives a session. Restart Claude
+  Code mid-run and a task tree built an hour earlier became invisible: every source write was refused,
+  with the reason insisting the run had "no recorded `create_task`" while the tasks sat in the portal.
+  It was worse for sub-agents, which is how it surfaced — three lanes blocked at once. A fresh
+  sub-agent's stream contains no portal writes at all, and **must not**, because the canon explicitly
+  says to keep portal writes in the parent session. The canon asked for something it then refused to
+  accept. The decomposition is now recorded on the RUN, so it survives a restart and is visible to a
+  sub-agent; a run that genuinely has no tree is still refused.
 - **A quoted `>` was parsed as a redirection — fixed in 1.6.2.** The shell scan ran over raw segment
   text, so a comparison inside a quoted argument (`node -e '... a > b ...'`) was reported as a file
   write. It refused a read-only diagnostic, and because the same scan answers "does this command change

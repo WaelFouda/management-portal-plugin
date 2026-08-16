@@ -1469,6 +1469,67 @@ function caseGapLedgerLineAlwaysParses() {
   delete require.cache[require.resolve('./canon-lib.js')];
 }
 
+function caseGapTreeSurvivesTheSession() {
+  console.log('\nGAP the decomposition belongs to the RUN, not to whichever session saw it');
+  // MEASURED, and it stopped three sub-agents dead in one session.
+  //
+  // CANON-TREE-FIRST counted the four decomposition calls in the SESSION FAMILY's tool
+  // stream. A run outlives a session, so restarting Claude Code mid-run hid a tree built an
+  // hour earlier and every source write was refused — the reason insisting the run had "no
+  // recorded create_task" while the tasks sat in the portal.
+  //
+  // Worse for sub-agents, which is how it surfaced: a fresh sub-agent's stream contains no
+  // portal writes AT ALL, and must not, because the canon explicitly says to keep portal
+  // writes in the parent session. The canon asked for something it then refused to accept.
+  const fs = require('fs'), path = require('path');
+  const sid = fresh();
+  const open = cli(['run-open', '--client', 'C', '--project', 'P', '--state', 'RUN']);
+  const runId = ((open.stdout || '') .match(/r-[0-9a-f]+/) || [])[0];
+  check('(precondition) a run was opened', Boolean(runId));
+  const src = path.join(PROJ, 'thing.ts');
+
+  // Before any decomposition: refused, as it should be.
+  const before = gate('pre', pre(sid, 'Write', { file_path: src, content: 'x' }));
+  check('(precondition) refuses a source write with no decomposition',
+    /CANON-TREE-FIRST/.test(denialOf(before) || ''));
+
+  // Build the decomposition in THIS session.
+  seedSeen(sid, UUID_A);
+  for (const [tool, args] of [
+    ['create_task', { title: 'T' }],
+    ['create_subtask', { parent_task_id: UUID_A, title: 'S' }],
+    ['create_flow_cluster', { title: 'C' }],
+    ['create_flow_connection', { source_id: UUID_A, target_id: UUID_B }],
+  ]) gate('post', post(sid, MCP + tool, args, 'ok [id: ' + UUID_C + ']'));
+
+  const after = gate('pre', pre(sid, 'Write', { file_path: src, content: 'x' }));
+  check('allows the write once the decomposition exists',
+    !/CANON-TREE-FIRST/.test(denialOf(after) || ''), (denialOf(after) || '').slice(0, 140));
+
+  // THE ACTUAL BUG: a NEW session — a restart, or a sub-agent — against the SAME run.
+  // Its ledger is empty; the run's record is the only evidence, and it must be enough.
+  const sid2 = 'sess-restart-' + Math.random().toString(16).slice(2, 8);
+  const afterRestart = gate('pre', pre(sid2, 'Write', { file_path: src, content: 'x' }));
+  check('a NEW session against the same run is not refused',
+    !/CANON-TREE-FIRST/.test(denialOf(afterRestart) || ''), (denialOf(afterRestart) || '').slice(0, 200));
+
+  // And the run itself carries the evidence, so it is durable rather than incidental.
+  if (runId) {
+    const run = JSON.parse(fs.readFileSync(path.join(HOME, 'runs', runId + '.json'), 'utf8'));
+    const t = run.tree || {};
+    check('the run records all four pieces',
+      Boolean(t.task && t.subtask && t.cluster && t.connection), JSON.stringify(t));
+  }
+
+  // The other side: a DIFFERENT run with no decomposition is still refused, so this did
+  // not simply switch the gate off.
+  const sid3 = fresh();
+  cli(['run-open', '--client', 'C2', '--project', 'P2', '--state', 'RUN']);
+  const other = gate('pre', pre(sid3, 'Write', { file_path: path.join(PROJ, 'other.ts'), content: 'x' }));
+  check('a different run with no decomposition is STILL refused',
+    /CANON-TREE-FIRST/.test(denialOf(other) || ''), (denialOf(other) || '').slice(0, 140));
+}
+
 function caseGapQuotedAngleIsNotARedirect() {
   console.log('\nGAP a `>` inside quotes is a comparison, not a redirection');
   // MEASURED. `node -e '... Date.now() - mtime > 3600000 ...'` was REFUSED by
@@ -1709,7 +1770,7 @@ function run() {
     caseP8, caseO1, caseS1, caseNoRepeat, caseBudget, caseEscapes, caseFailSafe, casePrivacy,
     caseLifecycle, caseTools,
     caseGapShellSurface, caseGapTreeFirstEffect, caseGapBulk, caseGapBulkResponseShape,
-    caseGapLedgerLineAlwaysParses, caseGapQuotedAngleIsNotARedirect, caseGapProgressKeepsTheNetUp, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
+    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapProgressKeepsTheNetUp, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
     caseGapIdProvenance, caseGapScope,
     caseDebtReadBack, caseDebtSeams, caseDebtThisTurn, caseDebtCloseout, caseDebtDegrades, caseDebtColdReturn,
     caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath];

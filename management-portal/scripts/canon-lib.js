@@ -1124,6 +1124,32 @@ function spendBlock(run, gateId, budget) {
  * So the counter resets on evidence of progress rather than never. A stuck run
  * still exhausts its three and stays un-trapped; a moving run keeps its net.
  */
+/**
+ * Record on the RUN that a piece of the decomposition exists.
+ *
+ * MEASURED, and it stopped three sub-agents dead. CANON-TREE-FIRST counted the four
+ * decomposition calls in the SESSION FAMILY's tool stream — but a run outlives a session.
+ * Restart Claude Code mid-run and the tree you built an hour ago is in the previous
+ * session's shards, invisible to the new one, so every source write is refused until you
+ * re-create a decomposition that already exists and that the gate's own reason insists is
+ * missing.
+ *
+ * It is worse for sub-agents, which is how it surfaced: a fresh sub-agent's stream never
+ * contains portal writes at all — and must not, because the canon explicitly tells the
+ * agent to keep portal writes in the parent session. So the canon asked for something it
+ * then refused to accept, and every lane it recommends spawning was unable to write a line.
+ *
+ * The evidence is a durable fact about the RUN, so it belongs on the run rather than being
+ * re-derived from whichever session happens to be asking. Same reasoning as creditProgress.
+ */
+function creditTree(run, kind) {
+  if (!run || !kind) return run;
+  run.tree = run.tree || {};
+  run.tree[kind] = (run.tree[kind] || 0) + 1;
+  saveRun(run);
+  return run;
+}
+
 function creditProgress(run) {
   if (!run) return run;
   if (!run.blocks && !run.degraded) return run;
@@ -1253,7 +1279,7 @@ module.exports = {
   shellStrings, shellSegments, shellMutation, shellWriteTargets, redirectTargets, argWriteTargets, writeTargets,
   parseBulkResponse, bulkInnerNames, responseText,
   sentinel, canonMode, gateArmed,
-  resolveRun, saveRun, openRun, closeRun, spendBlock, blocksSpent, creditProgress, runFile, pointerFile,
+  resolveRun, saveRun, openRun, closeRun, spendBlock, blocksSpent, creditProgress, creditTree, runFile, pointerFile,
   debtFile, readDebt, writeDebt, clearDebt,
   readJSON, writeJSON, newRunId, sweep, readStdin,
   UUID_SRC, RUN_STALE_S, DEBT_TTL_S,
