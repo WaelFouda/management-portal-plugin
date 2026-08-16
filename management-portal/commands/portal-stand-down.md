@@ -1,9 +1,12 @@
 ---
-description: Stand the portal canon gates down for this session or run when one of them is blocking work it cannot un-block.
-argument-hint: "[gate id or 'all'] [reason]"
+description: Stand the portal canon gates down when one is blocking work it cannot un-block — or re-arm them afterwards.
+argument-hint: "[gate id or 'all'] [reason]   ·   re-arm [gate id or 'all']"
 ---
 
 Stand the canon gates down. This is the escape hatch, and it is honoured mid-session.
+
+**If the first argument is `re-arm` (or `rearm`), skip to §5 — that is the way back, and it is the
+half of this command people do not know exists.**
 
 ## 0. The arguments — both optional, on purpose
 
@@ -102,7 +105,8 @@ genuinely asked for a rebuild, do not stand `CANON-KG-DESTRUCTIVE` down — run
 
 - **Say in your answer that you stood a gate down, which one, and why.** A suspended discipline that nobody
   is told about is worse than no discipline — the owner will read the result believing it was verified.
-- Gates resume when the sentinel file is deleted, or when the run closes. Nothing expires it for you.
+- **Re-arm it the moment the reason expires — §5.** Nothing expires it for you, and the sentinel **survives
+  restarts**, so a gate stood down for one broken build stays off for every session after it.
 - `node "<CANON_GATE_PATH>" doctor` prints `CANON_HOME`, the resolved run, which gates are armed and which
   are stood down, and the last five blocks. It is how you check whether a stand-down from an earlier
   session is still in force.
@@ -119,7 +123,36 @@ genuinely asked for a rebuild, do not stand `CANON-KG-DESTRUCTIVE` down — run
   a phase, now resets every gate's counter. A genuinely stuck run still exhausts its three and cannot be
   trapped; a run that is visibly moving keeps its net.
 
+## 5. Re-arming — the way back
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/canon-gate.js" re-arm --gate all
+```
+
+Use `--gate <ID>` for one gate, `--gate all` for everything. It prints what it re-armed and, crucially,
+**what is still stood down** — so a partial re-arm cannot leave a gate silently off. Running it when
+nothing is suppressed is safe and says so.
+
+**Why this section exists.** Until 1.7.2 there was no way back at all. Standing a gate down was one
+command; putting it back was undocumented file surgery — the tool's only instruction was *"Delete that
+file to re-arm"*, pointing at a sentinel inside a plugin data directory nobody opens by hand. That
+asymmetry is not cosmetic:
+
+- **The sentinels outlive the session that wrote them.** "It will reset when I restart" is false. A
+  stand-down taken at 10am is still in force tomorrow.
+- **A stand-down that was CORRECT becomes a HOLE the moment its reason expires.** Standing a gate down
+  because the build was broken is right; leaving it down after the build is fixed silently removes real
+  protection, and the card that once said *"stood down"* is the only trace.
+- Measured: two gates crossed a restart still disabled, and were only re-armed because a note had been
+  written specifically to remember them. That is not a mechanism, that is luck.
+
+If you are unsure what is off, `node "<CANON_GATE_PATH>" doctor` lists every gate as `ARMED` or
+`stood down`, and `re-arm --gate all` ends with nothing suppressed.
+
 ## The honest limit
 
 Standing a gate down removes the enforcement, not the canon. Read after every write anyway. Journal the
 phase anyway. The gates were only ever the part of the discipline that could be checked by a machine.
+
+And re-arming restores the enforcement, not the verification you skipped while it was off. Anything
+written during a stand-down is still unverified — the gate stops asking; it does not answer.

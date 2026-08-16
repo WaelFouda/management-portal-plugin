@@ -45,6 +45,7 @@ Any one of these. **The first two take effect immediately, mid-session, with no 
 ```bash
 # 1. Sentinel file. The gate script writes it; every hook re-reads it on every invocation.
 node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" stand-down --gate <GATE-ID|all> --reason "why"
+node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" re-arm     --gate <GATE-ID|all>
 ```
 
 ```
@@ -126,7 +127,7 @@ completeness (`CANON-COMPLETE` — which names empty **fields** and never judges
 > parent's own uuid.
 >
 > **ARMED still is not ENFORCED for the rest**, and must not be written up as one. Everything not named
-> above is fixture-verified by `scripts/canon-selftest.js` (390 assertions) and has not been seen refusing
+> above is fixture-verified by `scripts/canon-selftest.js` (398 assertions) and has not been seen refusing
 > a live call. The status board in `skills/management-portal/canon-gates.md` remains the one place that
 > verdict lives; this box mirrors it and the two are required to agree.
 >

@@ -1688,6 +1688,47 @@ function caseGapQuotedAngleIsNotARedirect() {
   check('  …and still names the file', /thing\.ts/i.test(denialOf(real) || ''));
 }
 
+function caseGapReArmIsReachable() {
+  console.log('\nGAP an escape hatch with no way back is a hatch taken once and never closed');
+  // ASKED BY THE OWNER, in these words: "do we have a / command for rearming the gates?"
+  // The answer was no. Standing a gate down was ONE command; putting it back was
+  // undocumented file surgery, and the tool's only instruction was "Delete that file to
+  // re-arm" — pointing at a sentinel inside a plugin data directory nobody opens by hand.
+  //
+  // That asymmetry is not cosmetic. The sentinels OUTLIVE THE SESSION that wrote them, so
+  // "it resets when I restart" is false; and a stand-down that was CORRECT (a gate blocking
+  // on a broken build) becomes a HOLE the moment its reason expires. Measured the same day:
+  // two gates rode a restart still disabled, and were re-armed only because a note had been
+  // written specifically to remember them. That is luck, not a mechanism.
+  const before = cli(['re-arm', '--gate', 'all']).stdout || '';
+  check('re-arm with nothing suppressed is a safe no-op that says so',
+    /already armed|Nothing is suppressed/.test(before), before);
+
+  cli(['stand-down', '--gate', 'CANON-BULK', '--reason', 'selftest']);
+  const down = cli(['stand-down', '--gate', 'CANON-STATUS', '--reason', 'selftest']).stdout || '';
+  // The stand-down must TEACH THE WAY BACK. It is the one moment the operator is guaranteed
+  // to be looking, and the old text spent it naming a file path instead.
+  check('stand-down names the re-arm command, not a file to delete',
+    /re-arm --gate CANON-STATUS/.test(down), down);
+  check('  …and warns the sentinel survives restarts', /SURVIVES RESTARTS/.test(down), down);
+
+  // THE ASSERTION THAT MATTERS. A partial re-arm must never read as "you are done".
+  const one = cli(['re-arm', '--gate', 'CANON-BULK']).stdout || '';
+  check('re-arming one gate reports it', /re-armed CANON-BULK/.test(one), one);
+  check('  …and NAMES what is still stood down', /STILL STOOD DOWN: CANON-STATUS/.test(one), one);
+
+  const miss = cli(['re-arm', '--gate', 'CANON-ID']).stdout || '';
+  check('a gate that was not down says so and lists what is',
+    /nothing matched/.test(miss) && /CANON-STATUS/.test(miss), miss);
+
+  const all = cli(['re-arm', '--gate', 'all']).stdout || '';
+  check('re-arm all ends with nothing suppressed',
+    /Nothing is suppressed/.test(all) && !/STILL STOOD DOWN/.test(all), all);
+  // Both spellings, because a safety control must not stay off over a hyphen.
+  check('"rearm" is accepted as well as "re-arm"',
+    !/not a mode|unknown/i.test(cli(['rearm', '--gate', 'all']).stdout || ''));
+}
+
 function caseGapBriefReadBackIsDischargeable() {
   console.log('\nGAP the read a gate DEMANDS must be a read that can clear it');
   // MEASURED ON A LIVE SESSION, 2026-08-17, on the first turn after a restart. The
@@ -1962,7 +2003,7 @@ function run() {
     caseP8, caseO1, caseS1, caseNoRepeat, caseBudget, caseEscapes, caseFailSafe, casePrivacy,
     caseLifecycle, caseTools,
     caseGapShellSurface, caseGapTreeFirstEffect, caseGapBulk, caseGapBulkResponseShape,
-    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapBoardAndStatusEnforced, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapBriefReadBackIsDischargeable, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
+    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapBoardAndStatusEnforced, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapBriefReadBackIsDischargeable, caseGapReArmIsReachable, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
     caseGapIdProvenance, caseGapScope,
     caseDebtReadBack, caseDebtSeams, caseDebtThisTurn, caseDebtCloseout, caseDebtDegrades, caseDebtColdReturn,
     caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath];

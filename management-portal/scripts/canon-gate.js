@@ -2137,10 +2137,59 @@ function cliStandDown() {
   const file = path.join(L.HOME, name);
   try {
     fs.writeFileSync(file, JSON.stringify({ at: L.nowS(), gate, run: runId || null, reason }, null, 2), 'utf8');
+    // NAME THE WAY BACK, not the file. "Delete that file to re-arm" was the only re-arm
+    // instruction this tool ever gave: it points at a sentinel inside a plugin data
+    // directory nobody navigates to by hand, so turning a safety gate OFF was one command
+    // and turning it back ON was a file hunt. Measured consequence — two gates rode a
+    // restart still disabled, and the sentinels outlive the session that wrote them, so
+    // "it will reset" is false. An escape hatch with no documented way back is a hatch
+    // that is taken once and never closed.
     process.stdout.write('portal-canon: ' + (gate === 'all' ? 'ALL GATES' : gate)
-      + ' stood down. Sentinel: ' + file + '\nDelete that file to re-arm.\n');
+      + ' stood down. Sentinel: ' + file
+      + '\nTHIS SURVIVES RESTARTS. To re-arm:\n'
+      + '  node "' + __filename + '" re-arm --gate ' + gate + '\n'
+      + '  (or /portal-stand-down re-arm ' + gate + ')\n');
   } catch (e) {
     process.stdout.write('portal-canon: could not write sentinel: ' + e.message + '\n');
+  }
+  process.exit(0);
+}
+
+/**
+ * The counterpart to stand-down, and the reason it exists is the asymmetry itself.
+ *
+ * Standing a gate down was one command; putting it back was undocumented file surgery in
+ * `<plugin data>/management-portal-inline/canon/`. That is not a small ergonomic gap: a
+ * stand-down is correct on a broken build and becomes a HOLE the moment the build is
+ * fixed, and nothing in the tool ever said so or offered the way back. Two gates crossed
+ * a restart disabled before this existed.
+ *
+ * `--gate all` re-arms EVERYTHING, including per-gate sentinels — because someone who has
+ * lost track of what is off wants one call that ends with nothing suppressed, and a
+ * partial re-arm that leaves a gate silently down is the failure being fixed.
+ */
+function cliReArm() {
+  L.ensureDirs();
+  const gate = arg('gate', 'all');
+  let removed = [];
+  try {
+    const names = fs.readdirSync(L.HOME).filter((n) => n === 'STAND-DOWN' || n.startsWith('STAND-DOWN-'));
+    const targets = gate === 'all' ? names
+      : names.filter((n) => n === 'STAND-DOWN-' + gate);
+    for (const n of targets) {
+      try { fs.unlinkSync(path.join(L.HOME, n)); removed.push(n.replace(/^STAND-DOWN-?/, '') || 'ALL GATES'); } catch (e) { /* already gone */ }
+    }
+    const left = fs.readdirSync(L.HOME).filter((n) => n === 'STAND-DOWN' || n.startsWith('STAND-DOWN-'));
+    process.stdout.write(removed.length
+      ? 'portal-canon: re-armed ' + removed.join(', ') + '\n'
+        + (left.length ? 'STILL STOOD DOWN: ' + left.map((n) => n.replace(/^STAND-DOWN-?/, '') || 'ALL GATES').join(', ') + '\n'
+                       : 'Every gate is armed. Nothing is suppressed.\n')
+      : (names.length
+        ? 'portal-canon: nothing matched "' + gate + '". Currently stood down: '
+          + names.map((n) => n.replace(/^STAND-DOWN-?/, '') || 'ALL GATES').join(', ') + '\n'
+        : 'portal-canon: nothing was stood down — every gate is already armed.\n'));
+  } catch (e) {
+    process.stdout.write('portal-canon: could not re-arm: ' + e.message + '\n');
   }
   process.exit(0);
 }
@@ -2215,6 +2264,9 @@ function main() {
     case 'run-promote': return cliRunPromote();
     case 'run-close': return cliRunClose();
     case 'stand-down': return cliStandDown();
+    // Both spellings: the sentinel-era prose said "re-arm" and the command reads "rearm".
+    // A safety control that is off must never stay off because the verb was hyphenated.
+    case 're-arm': case 'rearm': return cliReArm();
     case 'doctor': return cliDoctor();
     case 'tools': return cliTools();
     case 'selftest': return require('./canon-selftest.js').run();
