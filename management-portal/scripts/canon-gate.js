@@ -1707,6 +1707,41 @@ function modePost(payload) {
         if (r0.ok !== false && TREE_TOOLS[r0.tool]) L.creditTree(L.resolveRun(payload.cwd), TREE_TOOLS[r0.tool]);
       }
     }
+    // AND THE PHASE BOUNDARY, for the same reason and on the same path.
+    //
+    // MEASURED 2026-08-17: Phase 10 was closed by delivering M10.2 and M10.4, each inside a
+    // bulk alongside its journal entry and its complete_task — the exact shape canon (f)
+    // asks for. The session card kept reporting "phase boundaries recorded 0", and the
+    // CANON-STATUS advisory claimed no milestone status write in a turn that had just made
+    // one. The recording site below keys on the TOP-LEVEL tool name, so inside a bulk it
+    // only ever sees `bulk`.
+    //
+    // This is the THIRD instance of one family, and the previous two were fixed in these
+    // very lines: ids returned inside a bulk were called unseen by CANON-ID, and a task
+    // tree built by bulk earned no creditTree. The boundary was left behind both times.
+    //
+    // It is not a cosmetic count. `phaseBoundaries` is what CANON-JOURNAL-PHASE and
+    // CANON-FLOW-READ key on and what credits CANON-ACCOUNT's block budget — so batching,
+    // which the canon instructs, silently switched off the journal gate, the flow-board
+    // gate and the budget refund together. A gate the canon's own advice disarms is worse
+    // than no gate, because the run still reports itself as governed.
+    {
+      const MS_TOOLS = ['update_milestone_status', 'update_proposal_milestone'];
+      for (const r0 of rows) {
+        if (r0.ok === false) continue;
+        const a0 = r0.args || {};
+        const s0 = String(a0.status || a0.new_status || '');
+        if (MS_TOOLS.includes(r0.tool) && /deliver|approv|complete|done/i.test(s0)) {
+          L.append(key, { v: 1, t, k: 'phase', s: key, a: agent, boundary: 'milestone',
+                          id: a0.milestone_id || null, status: s0 });
+          L.creditProgress(L.resolveRun(payload.cwd));
+        } else if (r0.tool === 'update_proposal_phase' && /complete|done/i.test(s0)) {
+          L.append(key, { v: 1, t, k: 'phase', s: key, a: agent, boundary: 'phase',
+                          id: a0.phase_id || null, status: s0 });
+          L.creditProgress(L.resolveRun(payload.cwd));
+        }
+      }
+    }
     const m = resp.match(/Ran\s+(\d+)\/(\d+)\s+call\(s\);\s*(\d+)\s+failed/);
     L.append(key, {
       v: 1, t, k: 'bulk', s: key, a: agent, tool: 'bulk', idh: L.harvestIdHeads(resp),

@@ -1729,6 +1729,66 @@ function caseGapReArmIsReachable() {
     !/not a mode|unknown/i.test(cli(['rearm', '--gate', 'all']).stdout || ''));
 }
 
+function caseGapBoundaryInsideABulk() {
+  console.log('\nGAP a milestone delivered inside a bulk is still a phase boundary');
+  // MEASURED 2026-08-17. Phase 10 was closed by delivering M10.2 and M10.4, each inside a
+  // `bulk` alongside its journal entry and its complete_task — which is exactly the shape
+  // canon (f) asks for. The session card went on reporting "phase boundaries recorded 0",
+  // and the CANON-STATUS advisory said "no milestone or phase status write recorded" in a
+  // turn that had just made one.
+  //
+  // The recording site keys on the TOP-LEVEL tool name, so inside a bulk it sees `bulk`
+  // and no boundary row is ever written. This is the third instance of one family: the
+  // bulk path not being walked the way the single-call path is. CANON-ID had it (ids
+  // returned inside a bulk were called unseen) and creditTree had it (a task tree built
+  // by bulk earned no credit); both were fixed in place, right here in this branch, and
+  // the boundary was left behind.
+  //
+  // IT IS NOT A COSMETIC COUNT. `phaseBoundaries` is what CANON-JOURNAL-PHASE and
+  // CANON-FLOW-READ key on, and what credits CANON-ACCOUNT's block budget. With it
+  // missing, an agent that batches — as instructed — silently switches off the journal
+  // gate, the flow-board gate, and the budget refund. THE CANON TELLS THE MODEL TO BATCH;
+  // batching must not disarm the gates that the same canon relies on.
+  const sid = fresh();
+  cli(['run-open', '--client', 'CB', '--project', 'PB', '--state', 'RUN']);
+  seedSeen(sid, UUID_A);
+  const body = 'Ran 2/2 call(s); 0 failed.\n'
+    + '[0] create_journal: Journal entry created [id: ' + UUID_C + ']\n'
+    + '[1] update_proposal_milestone: Milestone updated [id: ' + UUID_B + ']';
+  gate('post', post(sid, MCP + 'bulk', {
+    calls: [
+      { tool: 'create_journal', arguments: { folder_id: UUID_C, title: 'phase done' } },
+      { tool: 'update_proposal_milestone', arguments: { milestone_id: UUID_B, status: 'delivered' } },
+    ],
+  }, body));
+  const after = denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A })));
+  check('a milestone delivered INSIDE a bulk marks the phase boundary',
+    /CANON-JOURNAL-PHASE|CANON-FLOW-READ/.test(after || ''), (after || '(no boundary recorded)').slice(0, 140));
+
+  // The phase tool travels the same path and must too.
+  const sid2 = fresh();
+  cli(['run-open', '--client', 'CB2', '--project', 'PB2', '--state', 'RUN']);
+  seedSeen(sid2, UUID_A);
+  gate('post', post(sid2, MCP + 'bulk', {
+    calls: [{ tool: 'update_proposal_phase', arguments: { phase_id: UUID_B, status: 'completed' } }],
+  }, 'Ran 1/1 call(s); 0 failed.\n[0] update_proposal_phase: Phase updated [id: ' + UUID_B + ']'));
+  const after2 = denialOf(gate('pre', pre(sid2, MCP + 'update_task', { task_id: UUID_A })));
+  check('a phase completed INSIDE a bulk marks it too',
+    /CANON-JOURNAL-PHASE|CANON-FLOW-READ/.test(after2 || ''), (after2 || '(no boundary recorded)').slice(0, 140));
+
+  // THE OTHER SIDE. A bulk that changes no status must NOT invent a boundary — otherwise
+  // every batched read would arm the journal gate and the gate would mean nothing.
+  const sid3 = fresh();
+  cli(['run-open', '--client', 'CB3', '--project', 'PB3', '--state', 'RUN']);
+  seedSeen(sid3, UUID_A);
+  gate('post', post(sid3, MCP + 'bulk', {
+    calls: [{ tool: 'update_proposal_milestone', arguments: { milestone_id: UUID_B, subtitle: 'wording only' } }],
+  }, 'Ran 1/1 call(s); 0 failed.\n[0] update_proposal_milestone: Milestone updated [id: ' + UUID_B + ']'));
+  const after3 = denialOf(gate('pre', pre(sid3, MCP + 'update_task', { task_id: UUID_A })));
+  check('a bulk with NO status change invents no boundary',
+    !/CANON-JOURNAL-PHASE|CANON-FLOW-READ/.test(after3 || ''), (after3 || '').slice(0, 140));
+}
+
 function caseGapBriefReadBackIsDischargeable() {
   console.log('\nGAP the read a gate DEMANDS must be a read that can clear it');
   // MEASURED ON A LIVE SESSION, 2026-08-17, on the first turn after a restart. The
@@ -2003,7 +2063,7 @@ function run() {
     caseP8, caseO1, caseS1, caseNoRepeat, caseBudget, caseEscapes, caseFailSafe, casePrivacy,
     caseLifecycle, caseTools,
     caseGapShellSurface, caseGapTreeFirstEffect, caseGapBulk, caseGapBulkResponseShape,
-    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapBoardAndStatusEnforced, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapBriefReadBackIsDischargeable, caseGapReArmIsReachable, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
+    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapBoardAndStatusEnforced, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapBriefReadBackIsDischargeable, caseGapBoundaryInsideABulk, caseGapReArmIsReachable, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
     caseGapIdProvenance, caseGapScope,
     caseDebtReadBack, caseDebtSeams, caseDebtThisTurn, caseDebtCloseout, caseDebtDegrades, caseDebtColdReturn,
     caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath];
