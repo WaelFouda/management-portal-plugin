@@ -614,19 +614,26 @@ function fold(rows, run) {
     const prev = st.obligations.get(key);
     st.obligations.set(key, { w: tool, id, t, tu, neg, carried: Boolean(prev && prev.carried) });
   };
-  const clearReads = (tool, ids, sawResponse) => {
+  const clearReads = (tool, ids, sawResponse, heads) => {
     const idset = new Set(ids || []);
+    // `heads` are 8-char fingerprints of EVERY marked id in the response, kept because the
+    // full id list is capped and a listing can carry hundreds. Position is no guide to which
+    // id matters: the just-created row was measured at index 78 of 101 in one listing, so
+    // head, tail and both-ends trimming all dropped it and the obligation could never
+    // discharge. See harvestIdHeads in canon-lib for why a prefix is safe HERE and is
+    // deliberately never fed to the seen set.
+    const vouched = (id) => idset.has(id) || L.headsVouchFor(heads, id);
     for (const [key, o] of [...st.obligations]) {
       const maps = WRITE_READ_MAP[o.w] || [];
       if (!maps.includes(tool)) continue;
       if (o.neg) {
         // Absence discharges it. A read that still returns the id proves the delete did
         // not happen, so it deliberately leaves the obligation standing.
-        if (sawResponse && (!o.id || !idset.has(o.id))) st.obligations.delete(key);
+        if (sawResponse && (!o.id || !vouched(o.id))) st.obligations.delete(key);
         continue;
       }
-      if (!ids || !ids.length) continue;
-      if (!o.id || idset.has(o.id)) st.obligations.delete(key);
+      if ((!ids || !ids.length) && (!heads || !heads.length)) continue;
+      if (!o.id || vouched(o.id)) st.obligations.delete(key);
     }
   };
 
@@ -686,7 +693,7 @@ function fold(rows, run) {
 
     st.toolCallsSinceBlock++;
 
-    const apply = (tool, ids, ok, args) => {
+    const apply = (tool, ids, ok, args, heads) => {
       if (!tool) return;
       ids = ids || [];
       const a = args || {};
@@ -739,21 +746,26 @@ function fold(rows, run) {
         st.portalWriteTimes.push(t);
         if (st.firstPortalWriteAt === null) st.firstPortalWriteAt = t;
       }
-      if (ok !== false) { noteWrite(tool, ids, t, r.tu, a); clearReads(tool, ids, true); }
+      if (ok !== false) { noteWrite(tool, ids, t, r.tu, a); clearReads(tool, ids, true, heads); }
     };
 
     if (r.k === 'bulk') {
       st.bulkRuns++;
+      // The bulk's own fingerprints cover every inner response at once, so a read batched
+      // into a bulk discharges exactly like a direct one. That symmetry is required, not
+      // nice-to-have: canon (f) tells the agent to batch, and a debt that only unbatched
+      // reads could settle punished the behaviour the canon asks for.
+      const bulkHeads = r.idh || [];
       // The coarse channel first (see the `ids` note in modePost). A bulk IS a portal call,
       // so everything it returned is portal-issued and belongs in seen even when the
       // per-item split came back empty — which is exactly the state every bulk row written
       // before this fix is in, and those rows are still on disk being folded.
       (r.ids || []).forEach((i) => st.seen.add(i));
-      for (const it of (r.inner || [])) apply(it.tool, it.ids, it.ok, it.args || {});
+      for (const it of (r.inner || [])) apply(it.tool, it.ids, it.ok, it.args || {}, bulkHeads);
       // A write and its mapped read inside ONE bulk open-and-clear together — that is
       // canon (f) being obeyed correctly and must never block.
     } else {
-      apply(r.tool, r.ids, r.ok, r.args || {});
+      apply(r.tool, r.ids, r.ok, r.args || {}, r.idh || []);
       if (isPortalWrite(r.tool)) st.singleWrites++;
     }
   }
@@ -1552,7 +1564,7 @@ function modePost(payload) {
     }));
     const m = resp.match(/Ran\s+(\d+)\/(\d+)\s+call\(s\);\s*(\d+)\s+failed/);
     L.append(key, {
-      v: 1, t, k: 'bulk', s: key, a: agent, tool: 'bulk',
+      v: 1, t, k: 'bulk', s: key, a: agent, tool: 'bulk', idh: L.harvestIdHeads(resp),
       n: m ? Number(m[2]) : rows.length, ran: m ? Number(m[1]) : rows.filter((r) => r.ok).length,
       failed: m ? Number(m[3]) : rows.filter((r) => !r.ok).length,
       // `ids` is the SAFETY NET, and it is here because its absence is what turned one
@@ -1563,15 +1575,27 @@ function modePost(payload) {
     });
   } else {
     L.append(key, {
-      v: 1, t, k: 'post', s: key, a: agent, tool: bare || raw, raw, ok, ids,
+      v: 1, t, k: 'post', s: key, a: agent, tool: bare || raw, raw, ok, ids, idh: L.harvestIdHeads(resp),
       args: L.safeArgs(input), tu: payload.tool_use_id || null, ms: payload.duration_ms || null,
     });
     // Phase boundaries drive CANON-JOURNAL-PHASE and CANON-ACCOUNT.
-    if (bare === 'update_milestone_status' && /deliver|complete|done/i.test(String(input.status || ''))) {
+    //
+    // BOTH MILESTONE TOOLS COUNT. This watched `update_milestone_status` alone, but the
+    // tool an agent actually reaches for is `update_proposal_milestone` — it is what the
+    // canon's own status guidance names, and it carries the same `status` argument. So a
+    // run could deliver milestone after milestone and still report "phase boundaries
+    // recorded 0", which is not a cosmetic count: it is the progress signal that
+    // CANON-JOURNAL-PHASE keys on and that now restores the block budget below.
+    // Measured on a live day-long run — three milestones delivered, zero boundaries seen.
+    const MILESTONE_STATUS_TOOLS = ['update_milestone_status', 'update_proposal_milestone'];
+    if (MILESTONE_STATUS_TOOLS.includes(bare) && /deliver|approv|complete|done/i.test(String(input.status || ''))) {
       L.append(key, { v: 1, t, k: 'phase', s: key, a: agent, boundary: 'milestone', id: input.milestone_id || null, status: String(input.status || '') });
+      // Real progress buys the gates their budget back — see creditProgress.
+      L.creditProgress(L.resolveRun(payload.cwd));
     }
     if (bare === 'update_proposal_phase' && /complete|done/i.test(String(input.status || ''))) {
       L.append(key, { v: 1, t, k: 'phase', s: key, a: agent, boundary: 'phase', id: input.phase_id || null, status: String(input.status || '') });
+      L.creditProgress(L.resolveRun(payload.cwd));
     }
     if (bare === 'claim_coordinator_title' && ok) {
       L.append(key, { v: 1, t, k: 'mode', s: key, a: agent, mode: 'coordinator', channel: input.channel_id || null });

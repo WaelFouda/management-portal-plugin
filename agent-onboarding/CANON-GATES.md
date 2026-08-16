@@ -156,6 +156,14 @@ must stay word-consistent between them.
 - **`bypassPermissions` makes a deny the only brake.** In an autonomous run there is no permission
   UI to override a gate — which is exactly why the primary escape is a **file** re-read on every
   invocation, not a flag fixed at session start.
+- **A gate that budgets its own blocks can go silent for good — fixed in 1.6.1.** Every gate degrades to
+  a notice after 3 blocks in a run, so it can never trap a session that genuinely cannot proceed. The
+  counter was per-run and monotonic, so a run lasting a working day lost `CANON-ACCOUNT` by mid-morning
+  and never got it back — the one gate whose job is refusing a silent stop mid-run. It was compounded by
+  a second defect: phase boundaries were only recorded for `update_milestone_status`, never for
+  `update_proposal_milestone`, which is the tool the canon's own status guidance names. Three milestones
+  delivered, `phase boundaries recorded 0`. The budget is now refunded on evidence of progress, so a
+  moving run keeps its net and a stuck one still cannot be trapped.
 - **Two install channels keep two ledgers.** `CLAUDE_PLUGIN_DATA` differs between a marketplace
   install and a `--plugin-dir` run, so a run opened under one is invisible to the other. Set
   `PORTAL_CANON_HOME` to force a single home.

@@ -194,13 +194,37 @@ function sessionFile(key) { return path.join(DIR_SESSIONS, key + '.jsonl'); }
  * NTFS and ext4 that concurrent subagents do not interleave partial lines, which is why
  * the format is one-line-JSON and why nothing derived is ever written back.
  */
+/**
+ * Trim an id list to `keep` entries, TAKING FROM BOTH ENDS.
+ *
+ * MEASURED BUG, and the cause of two gates being stood down on a live machine. Every
+ * truncation here used to be `slice(0, N)` — the first N ids. But a read-back is ALWAYS
+ * about a record that was just written, and a freshly created row is the LAST entry a
+ * list response returns. So the head-slice discarded precisely the id the obligation was
+ * waiting for, and the more crowded the workspace got, the more reliably it did it.
+ *
+ * Observed: `list_flow_clusters` returned 104 clusters with the new one last. Its id was
+ * cut from the ledger row, the obligation never discharged, and the gate then demanded a
+ * filtered re-read of a tool that accepts no arguments — an unclearable latch produced
+ * entirely by this line. The same shape hit `list_flow_connections` at 101 rows.
+ *
+ * Both ends, because both matter: the head is what a "does this list still contain X"
+ * check reads, the tail is what a "did my write land" check reads.
+ */
+function trimIds(arr, keep) {
+  if (!Array.isArray(arr) || arr.length <= keep) return arr || [];
+  const head = Math.ceil(keep / 2);
+  const tail = keep - head;
+  return [...new Set([...arr.slice(0, head), ...arr.slice(arr.length - tail)])];
+}
+
 function append(key, obj) {
   try {
     ensureDirs();
     let line = JSON.stringify(obj);
     if (line.length > 4000) {
       // Truncating is better than dropping: the kinds and ids matter more than the tail.
-      if (Array.isArray(obj.ids) && obj.ids.length > 20) obj.ids = obj.ids.slice(0, 20);
+      if (Array.isArray(obj.ids)) obj.ids = trimIds(obj.ids, 40);
       if (obj.inner && obj.inner.length > 20) obj.inner = obj.inner.slice(0, 20);
       obj.trunc = 1;
       line = JSON.stringify(obj);
@@ -212,15 +236,25 @@ function append(key, obj) {
       // a gate refuse honest work, so this now discards fields in order of expendability
       // and re-serialises, and the line it writes always parses.
       if (line.length > 4000 && obj.inner) {
-        obj.inner = obj.inner.map((r) => ({ i: r.i, tool: r.tool, ok: r.ok, ids: (r.ids || []).slice(0, 8) }));
+        obj.inner = obj.inner.map((r) => ({ i: r.i, tool: r.tool, ok: r.ok, ids: trimIds(r.ids, 8) }));
         line = JSON.stringify(obj);
       }
       if (line.length > 4000 && obj.args) { delete obj.args; line = JSON.stringify(obj); }
-      if (line.length > 4000 && Array.isArray(obj.ids)) { obj.ids = obj.ids.slice(0, 8); line = JSON.stringify(obj); }
+      if (line.length > 4000 && Array.isArray(obj.ids)) { obj.ids = trimIds(obj.ids, 16); line = JSON.stringify(obj); }
+      // `inner` is dropped LAST and only when nothing else will fit, because each inner row
+      // is a call whose ids can discharge an obligation. When it does go, the coarse
+      // top-level `ids` still carries the harvest — which is why that field exists.
       if (line.length > 4000 && obj.inner) { delete obj.inner; line = JSON.stringify(obj); }
+      // `idh` is shed only after args, ids and inner, and trimmed rather than dropped: it is
+      // the ONLY field that can discharge a read-back obligation for a long listing, because
+      // the full ids never fit and their position is no guide to which one matters.
+      if (line.length > 4000 && Array.isArray(obj.idh)) { obj.idh = obj.idh.slice(0, 150); line = JSON.stringify(obj); }
       if (line.length > 4000) {
         // Last resort: a minimal row that still carries what the fold reads.
-        line = JSON.stringify({ v: obj.v, t: obj.t, k: obj.k, s: obj.s, a: obj.a, tool: obj.tool, ok: obj.ok, ids: (obj.ids || []).slice(0, 8), trunc: 1 });
+        line = JSON.stringify({
+          v: obj.v, t: obj.t, k: obj.k, s: obj.s, a: obj.a, tool: obj.tool, ok: obj.ok,
+          ids: trimIds(obj.ids, 16), idh: (obj.idh || []).slice(0, 150), trunc: 1,
+        });
       }
     }
     fs.appendFileSync(sessionFile(key), line + '\n', 'utf8');
@@ -318,6 +352,19 @@ const RE_ID_KEY = /(^|_)ids?$/i;
 const RESP_SCAN_CAP = 65536;
 /** Bare integers are noisy; cap them so they can never crowd real ids out of a ledger line. */
 const INT_SEEN_CAP = 30;
+/**
+ * Per-tier id budgets, sized so a harvested row still fits the 4 KB ledger line WITHOUT
+ * append() having to trim it. That matters: append cannot tell a portal-marked id from a
+ * uuid that merely appeared in some prose, so any trimming it does is blind. Bounding here
+ * keeps the decision where the information is.
+ *
+ * 40 marked ids at ~39 bytes is ~1.6 KB, 20 wide is ~0.8 KB -- comfortably inside the line
+ * with the other fields, so the blind trim downstream almost never fires.
+ */
+const MARKED_SEEN_CAP = 40;
+const WIDE_SEEN_CAP = 20;
+/** Compact id fingerprints per row — 8 hex chars each, so a 300-row listing costs ~2.7 KB. */
+const ID_HEAD_CAP = 300;
 
 /**
  * Wide harvest, for the SEEN set. Deliberately generous.
@@ -330,20 +377,97 @@ function harvestSeen(text) {
   if (!text) return [];
   const s = typeof text === 'string' ? text : JSON.stringify(text);
   const body = s.length > RESP_SCAN_CAP ? s.slice(0, RESP_SCAN_CAP) : s;
-  const strong = new Set();
+  // TWO TIERS, AND THE SPLIT IS LOAD-BEARING.
+  //
+  // `marked` are ids the portal explicitly labelled -- `[id: ...]` or `id: ...`. Every
+  // create response and every row of every listing announces its id that way, so this is
+  // the authoritative tier. `wide` is the generous sweep for any other uuid in the text.
+  //
+  // They used to share one Set, and that is what broke read-back on a busy workspace. The
+  // ledger line is capped, so a long response had its id list trimmed -- and because the
+  // marked ids were collected first and the wide sweep appended after them, the NEWEST
+  // marked id (a freshly created row is the LAST line of a listing) sat in the MIDDLE of
+  // the array. Trimming from either end, or from both, discarded precisely the id the
+  // read-back was waiting for. Measured on a live machine at 104 clusters and 101
+  // connections: the obligation could not be discharged by any call, because the gate then
+  // demanded a filtered re-read of tools that accept no arguments.
+  //
+  // Bounding each tier HERE, where the two can still be told apart, is the fix. Keeping
+  // both ends of the marked tier keeps both the head of a listing and the row just written.
+  const marked = new Set();
+  const wide = new Set();
   const ints = [];
   let m;
   RE_ID_BRACKET.lastIndex = 0;
-  while ((m = RE_ID_BRACKET.exec(body))) strong.add(m[1].toLowerCase());
+  while ((m = RE_ID_BRACKET.exec(body))) marked.add(m[1].toLowerCase());
   RE_ID_LOOSE.lastIndex = 0;
-  while ((m = RE_ID_LOOSE.exec(body))) strong.add(m[1].toLowerCase());
+  while ((m = RE_ID_LOOSE.exec(body))) marked.add(m[1].toLowerCase());
   RE_UUID_G.lastIndex = 0;
-  while ((m = RE_UUID_G.exec(body))) strong.add(m[0].toLowerCase());
+  while ((m = RE_UUID_G.exec(body))) { const v = m[0].toLowerCase(); if (!marked.has(v)) wide.add(v); }
+  // A UUID CONTAINS THINGS THAT LOOK LIKE A SLUG ID, and treating one as real is not a
+  // harmless false positive. The tail of `72ce4477-f495-4306-ab5a-d768e61ac91c` matches the
+  // `col-<hex>` slug shape as `ab5a-d768e61ac91c`. Harvested from a list_subtasks response
+  // it was recorded as a CHILD of that very task, and CANON-BOTTOM-UP then refused a
+  // legitimate complete_task because a "subtask" it had never issued was not completed —
+  // a refusal nothing could clear, since there is no such subtask to complete. Measured.
+  //
+  // This file already warns that a false child is unclearable where a false seen-id is
+  // merely weakening; the guard for it was just never written. Any candidate that appears
+  // INSIDE a uuid we already harvested is a fragment, not an id.
+  const uuidBlob = [...marked, ...wide].join(' ');
   RE_PREFIX_HEX_G.lastIndex = 0;
-  while ((m = RE_PREFIX_HEX_G.exec(body))) strong.add(m[0].toLowerCase());
+  while ((m = RE_PREFIX_HEX_G.exec(body))) {
+    const v = m[0].toLowerCase();
+    if (marked.has(v) || uuidBlob.includes(v)) continue;
+    wide.add(v);
+  }
   RE_INT_G.lastIndex = 0;
   while ((m = RE_INT_G.exec(body)) && ints.length < INT_SEEN_CAP) ints.push(m[0]);
-  return [...strong, ...ints.filter((i) => !strong.has(i))];
+
+  const keep = trimIds([...marked], MARKED_SEEN_CAP);
+  const rest = trimIds([...wide], WIDE_SEEN_CAP);
+  const seen = new Set([...keep, ...rest]);
+  return [...seen, ...ints.filter((i) => !seen.has(i))];
+}
+
+/**
+ * Every portal-MARKED id in a response, compressed to its first 8 hex characters.
+ *
+ * THIS EXISTS BECAUSE POSITION CANNOT BE TRUSTED. The ledger line is capped, a listing can
+ * carry hundreds of ids, and a full uuid costs ~39 bytes — so some always had to be
+ * dropped. Every rule for choosing WHICH to drop assumed something about ordering: keep the
+ * head (assumes the record is early), keep both ends (assumes a new record is last). Both
+ * were wrong. Measured: `list_flow_connections` returned 101 rows with the just-created one
+ * at position 78 — the middle — so head, tail and both-ends trimming all discarded it, and
+ * the read-back obligation could not be discharged by any call the tool could accept.
+ *
+ * Eight hex characters is 4 bytes of entropy, ~9 bytes on the wire. A whole listing fits.
+ * Collision risk is a birthday problem over 4.3 billion values across a few hundred ids per
+ * response: negligible, and the failure mode of a collision is a read-back that clears
+ * slightly too easily — strictly better than one that can never clear at all.
+ *
+ * This is a DISCHARGE aid only. It never feeds the seen set, because CANON-ID must keep
+ * comparing whole ids: a prefix match there would weaken a gate whose entire job is to
+ * refuse an id nobody issued.
+ */
+function harvestIdHeads(text, cap) {
+  if (!text) return [];
+  const s = typeof text === 'string' ? text : JSON.stringify(text);
+  const body = s.length > RESP_SCAN_CAP ? s.slice(0, RESP_SCAN_CAP) : s;
+  const heads = new Set();
+  const limit = cap || ID_HEAD_CAP;
+  let m;
+  RE_ID_BRACKET.lastIndex = 0;
+  while ((m = RE_ID_BRACKET.exec(body)) && heads.size < limit) heads.add(m[1].toLowerCase().slice(0, 8));
+  RE_ID_LOOSE.lastIndex = 0;
+  while ((m = RE_ID_LOOSE.exec(body)) && heads.size < limit) heads.add(m[1].toLowerCase().slice(0, 8));
+  return [...heads];
+}
+
+/** Does a stored row's compact head list vouch for this id? */
+function headsVouchFor(heads, id) {
+  if (!Array.isArray(heads) || !heads.length || !id) return false;
+  return heads.includes(String(id).toLowerCase().slice(0, 8));
 }
 
 /** Is this value shaped like an id this product issues? */
@@ -934,6 +1058,34 @@ function spendBlock(run, gateId, budget) {
   return n <= budget;
 }
 
+/**
+ * A phase boundary was reached — give every gate its block budget back.
+ *
+ * REPORTED BY THE OWNER, and the complaint was exactly right: "I keep telling you
+ * to continue." CANON-ACCOUNT is the gate whose whole job is refusing a silent
+ * stop mid-run. It gets three blocks and then degrades to a notice FOREVER,
+ * because the budget was per-run and monotonic. On a run that lasts a working day
+ * the safety net is gone by mid-morning and never comes back, so the owner became
+ * the mechanism.
+ *
+ * The budget exists to stop a gate trapping a session that genuinely cannot
+ * proceed — a real hazard, and the cap should stay for that. But "cannot proceed"
+ * and "has been going for hours" are different states, and only the first
+ * deserves a silenced gate. Delivering a milestone is proof of the second.
+ *
+ * So the counter resets on evidence of progress rather than never. A stuck run
+ * still exhausts its three and stays un-trapped; a moving run keeps its net.
+ */
+function creditProgress(run) {
+  if (!run) return run;
+  if (!run.blocks && !run.degraded) return run;
+  run.blocks = {};
+  run.degraded = {};
+  run.last_progress_at = nowS();
+  saveRun(run);
+  return run;
+}
+
 function blocksSpent(run) {
   if (!run || !run.blocks) return 0;
   return Object.values(run.blocks).reduce((a, b) => a + (b || 0), 0);
@@ -1049,11 +1201,11 @@ function readStdin(cb) {
 module.exports = {
   normPath, normTarget, sha1, HOME, HOME_SOURCE, DIR_SESSIONS, DIR_RUNS, DIR_BYPROJ, ensureDirs, projHash, nowS,
   sessionKey, sessionFile, append, readLines, readFamily,
-  harvestSeen, harvestArgIds, idShape, safeArgs, bareToolName,
+  harvestSeen, harvestArgIds, harvestIdHeads, headsVouchFor, trimIds, idShape, safeArgs, bareToolName,
   shellStrings, shellSegments, shellMutation, shellWriteTargets, argWriteTargets, writeTargets,
   parseBulkResponse, bulkInnerNames, responseText,
   sentinel, canonMode, gateArmed,
-  resolveRun, saveRun, openRun, closeRun, spendBlock, blocksSpent, runFile, pointerFile,
+  resolveRun, saveRun, openRun, closeRun, spendBlock, blocksSpent, creditProgress, runFile, pointerFile,
   debtFile, readDebt, writeDebt, clearDebt,
   readJSON, writeJSON, newRunId, sweep, readStdin,
   UUID_SRC, RUN_STALE_S, DEBT_TTL_S,

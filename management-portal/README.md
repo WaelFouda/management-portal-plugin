@@ -32,7 +32,7 @@ key to create, paste or store. The plugin ships no `userConfig` prompt, and its 
 
 ---
 
-# The canon gates (1.5.0) — READ THE ESCAPE FIRST
+# The canon gates (1.6.1) — READ THE ESCAPE FIRST
 
 1.5.0 turns parts of the agent discipline from **reminders** into **hooks that refuse**. Before anything
 else, here is how to turn them off, because someone reading this section is usually reading it because
@@ -75,6 +75,11 @@ per session, a dead-man rule that disarms any gate blocking twice with no tool c
 24-hour no-progress TTL that closes an abandoned run. A stuck session un-sticks itself even if nobody
 finds this page.
 
+**From 1.6.1 the per-run budget is REFUNDED BY PROGRESS** — a milestone delivered or approved, or a phase
+completed. It used to be monotonic, which meant a run lasting a working day lost `CANON-ACCOUNT` by
+mid-morning and never got it back, and the owner ended up doing the gate's job by hand. A genuinely stuck
+run still exhausts its three and cannot be trapped; a run that is visibly moving keeps its net.
+
 ## What actually refuses, and what only advises
 
 **The distinction is the whole point of this release, so it is stated in three places and they must
@@ -102,7 +107,7 @@ graph closure and final journal (`CANON-CLOSEOUT`).
 deny on the fourth single write cannot undo the first three), status discipline (`CANON-STATUS`), and
 completeness (`CANON-COMPLETE` — which names empty **fields** and never judges what is written in them).
 
-> ### ⚠️ Status, as of plugin 1.5.0 — shipped and armed, not verified here
+> ### ⚠️ Status, as of plugin 1.6.1 — three gates verified live, the rest armed
 >
 > **The engine ships.** `scripts/canon-gate.js` is present, 2062 lines, emits a real `PreToolUse`
 > `permissionDecision: "deny"`, and `hooks/hooks.json` wires it into 8 of the 11 hook entries. The
@@ -110,12 +115,18 @@ completeness (`CANON-COMPLETE` — which names empty **fields** and never judges
 > **ARMED** — shipped, wired, and **fixture-verified** by `scripts/canon-selftest.js`, which spawns the
 > real binary with fixture payloads and drives each gate into its latched state and back out.
 >
-> **ARMED is not ENFORCED, and it must not be written up as one.** *No live refusal has been observed
-> against this merged build* — nobody has driven this tree with `claude -p` and watched a canon gate
-> refuse a call. The honest sentence is **"the gates ship and are armed; fixture-verified, not verified
-> here"**, never "the gates are verified and working". The status board in
-> `skills/management-portal/canon-gates.md` remains the one place that verdict lives; this box mirrors
-> it and the two are required to agree.
+> **THREE ARE NOW VERIFIED LIVE, and the first refusals were WRONG — which is the honest headline.**
+> On 2026-08-16 `CANON-ID`, `CANON-READ-BACK` and `CANON-BOTTOM-UP` were all observed refusing real calls
+> in a live session. `CANON-ID`'s first refusals were **false**: 1.5.0 read a `bulk` response as a string
+> when it is really content blocks, so every id returned inside a batch was dropped from the seen-id
+> ledger and the gate refused ids the server had just issued. 1.6.0 fixed that; 1.6.1 fixed three more of
+> the same family, including a `CANON-BOTTOM-UP` refusal naming a "subtask" that was a fragment of the
+> parent's own uuid.
+>
+> **ARMED still is not ENFORCED for the rest**, and must not be written up as one. Everything not named
+> above is fixture-verified by `scripts/canon-selftest.js` (351 assertions) and has not been seen refusing
+> a live call. The status board in `skills/management-portal/canon-gates.md` remains the one place that
+> verdict lives; this box mirrors it and the two are required to agree.
 >
 > The turn-end Team Chat ABSENT gate (`watch-alarm.js`) is still the one piece of enforcement observed
 > live: `decision: block`, verified on Claude Code 2.1.222 and 2.1.85.
@@ -152,6 +163,17 @@ node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" selftest   # fixture payloads 
 ```
 
 ## Known failure modes — named, not hidden
+
+- **A long run used to lose its safety net permanently — fixed in 1.6.1, and worth knowing why.** Each
+  gate has a per-run block budget (3), after which it degrades to a notice so it can never trap a session
+  that genuinely cannot proceed. That counter was monotonic, so on a run lasting a working day
+  `CANON-ACCOUNT` — the gate whose whole job is refusing a silent stop mid-run — was a notice by
+  mid-morning and never came back. Compounding it, a phase boundary was only recorded for
+  `update_milestone_status` while the tool everyone actually uses is `update_proposal_milestone`, so a run
+  could deliver milestone after milestone and still report `phase boundaries recorded 0`. The gate went
+  quiet and the evidence that it should not have was never written down. **The budget is now refunded by
+  progress** — a milestone delivered or approved, or a phase completed — so a moving run keeps its net
+  while a stuck one still exhausts its three.
 
 - **A session that dies mid-run leaves the run open.** The run manifest lives on disk keyed by project
   (which is what lets "keep going" survive compaction and a restart), so later sessions in that project
@@ -441,7 +463,7 @@ remember.
 > ```
 >
 > Then **reload** (`/reload-plugins`) or restart Claude Code, and **verify before you trust it**: run
-> `/plugin` and confirm the installed version reads **1.5.0**. If it does not, you are running older code
+> `/plugin` and confirm the installed version reads **1.6.1**. If it does not, you are running older code
 > no matter what the repository says.
 >
 > **This is per machine.** A bump reaches nobody until each machine updates.

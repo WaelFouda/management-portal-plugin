@@ -106,6 +106,12 @@ genuinely asked for a rebuild, do not stand `CANON-KG-DESTRUCTIVE` down — run
   session is still in force.
 - Some gates stand themselves down without being asked: each has a per-run block budget, and a gate that
   blocks twice with no tool call in between is treated as stuck. When that happens the canon card says so.
+- **From 1.6.1 that budget is refunded by progress.** It used to be per-run and monotonic — three blocks
+  and the gate was a notice for the rest of the run, however long the run lasted and however much work
+  landed after. On a day-long run `CANON-ACCOUNT` was silent by mid-morning and never came back, so the
+  owner became the mechanism that kept the run moving. Delivering or approving a milestone, or completing
+  a phase, now resets every gate's counter. A genuinely stuck run still exhausts its three and cannot be
+  trapped; a run that is visibly moving keeps its net.
 
 ## The honest limit
 

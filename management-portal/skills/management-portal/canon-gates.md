@@ -228,7 +228,7 @@ cannot hide behind another gate's reason.
 | Gate | Blocks when | Clears by |
 |---|---|---|
 | **CANON-READ-BACK** | A portal write has no mapped read carrying the same id. Once per turn, 12 per session. **Deletes clear on ABSENCE** — the block text says so, because an id coming *back* after a delete is proof the delete failed. | The mapped read from the write→read map (`reference.md` §3) — ideally one `bulk` of them. |
-| **CANON-ACCOUNT** | A turn is ending with phases remaining and no journal entry written this turn. Budget 3 per run. | Continue into the next phase's first real step, **or** journal what stopped you, tagged `blocked`. You may not stop silently; you may always stop with an account. |
+| **CANON-ACCOUNT** | A turn is ending with phases remaining and no journal entry written this turn. Budget 3 per run, **refunded by progress since 1.6.1**. | Continue into the next phase's first real step, **or** journal what stopped you, tagged `blocked`. You may not stop silently; you may always stop with an account. |
 | **CANON-READ-BACK-STOP** | Read-back obligations are still open at turn end. Budget 3. ⚠ **Not in `REGISTER`** — so it appears on neither the canon card nor `doctor`. | The same bulk read. |
 | **CANON-CLOSEOUT** | All phases are terminal but the summary board, the knowledge-graph closure, or the final journal entry is missing. Budget 2. | Whichever the reason names. When nothing is missing it **auto-closes the run**. |
 

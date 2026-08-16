@@ -1469,6 +1469,143 @@ function caseGapLedgerLineAlwaysParses() {
   delete require.cache[require.resolve('./canon-lib.js')];
 }
 
+function caseGapProgressKeepsTheNetUp() {
+  console.log('\nGAP the tool people actually use marks a boundary, and progress restores the budget');
+  // REPORTED BY THE OWNER, in these words: "I keep telling you to continue."
+  //
+  // Two defects, compounding, both measured on a live day-long run:
+  //
+  //  1. Only `update_milestone_status` marked a phase boundary. The tool an agent
+  //     actually reaches for — and the one the canon's own status guidance names —
+  //     is `update_proposal_milestone`. Three milestones were delivered and the run
+  //     still reported "phase boundaries recorded 0".
+  //  2. CANON-ACCOUNT's block budget was per-run and monotonic: three blocks and it
+  //     degrades to a notice for the rest of the run, forever. On a run lasting a
+  //     working day the net is gone by mid-morning, so the OWNER became the net.
+  //
+  // Together: the gate that exists to refuse a silent stop went quiet, and the
+  // signal that would have shown the run was healthy was never recorded.
+
+  // (1) the boundary is recorded for the tool people use — proved through the gate
+  //     that keys on boundaries, not by inspecting the ledger.
+  const sid = fresh();
+  cli(['run-open', '--client', 'C', '--project', 'P', '--state', 'RUN']);
+  seedSeen(sid, UUID_A);
+  gate('post', post(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }, 'ok [id: ' + UUID_B + ']'));
+  const afterBoundary = gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A }));
+  check('update_proposal_milestone(delivered) marks a phase boundary',
+    /CANON-JOURNAL-PHASE/.test(denialOf(afterBoundary) || ''), (denialOf(afterBoundary) || '').slice(0, 140));
+  check('and the refusal names that milestone', (denialOf(afterBoundary) || '').includes(UUID_B));
+
+  // `approved` is a delivered state too — it was not matched before.
+  const sid2 = fresh();
+  cli(['run-open', '--client', 'C2', '--project', 'P2', '--state', 'RUN']);
+  seedSeen(sid2, UUID_A);
+  gate('post', post(sid2, MCP + 'update_proposal_milestone', { milestone_id: UUID_C, status: 'approved' }, 'ok [id: ' + UUID_C + ']'));
+  const approved = gate('pre', pre(sid2, MCP + 'update_task', { task_id: UUID_A }));
+  check('approved counts as a boundary as well as delivered',
+    /CANON-JOURNAL-PHASE/.test(denialOf(approved) || ''), (denialOf(approved) || '').slice(0, 140));
+
+  // (2) progress restores a spent budget.
+  const fs = require('fs'); const path = require('path');
+  const sid3 = fresh();
+  const open = cli(['run-open', '--client', 'C3', '--project', 'P3', '--state', 'RUN']);
+  const runId = ((open.stdout || '').match(/r-[0-9a-f]+/) || [])[0];
+  check('(precondition) a run was opened', Boolean(runId), open.stdout || open.stderr || '');
+  if (runId) {
+    const file = path.join(HOME, 'runs', runId + '.json');
+    const spend = () => { const r = JSON.parse(fs.readFileSync(file, 'utf8')); r.blocks = { 'CANON-ACCOUNT': 3 }; r.degraded = { 'CANON-ACCOUNT': 'block budget of 3 exhausted in this run' }; fs.writeFileSync(file, JSON.stringify(r)); };
+    spend();
+    check('(precondition) the budget reads as exhausted',
+      /exhausted/.test(fs.readFileSync(file, 'utf8')));
+    gate('post', post(sid3, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }, 'ok [id: ' + UUID_B + ']'));
+    const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+    check('delivering a milestone restores the block budget',
+      !after.degraded || !after.degraded['CANON-ACCOUNT'], JSON.stringify(after.degraded || {}));
+    check('and the run records when it last moved', Boolean(after.last_progress_at));
+  }
+}
+
+function caseGapUuidFragmentIsNotAnId() {
+  console.log('\nGAP a fragment of a uuid is not a child task');
+  // MEASURED. The slug-id shape (`col-<hex>`) matches INSIDE a uuid: the tail of
+  // 72ce4477-f495-4306-ab5a-d768e61ac91c matches as `ab5a-d768e61ac91c`. Harvested from a
+  // list_subtasks response it was recorded as a CHILD of that very task, and
+  // CANON-BOTTOM-UP then refused a legitimate complete_task because a "subtask" the portal
+  // had never issued was not completed. Unclearable: there is no such subtask to complete.
+  //
+  // canon-lib already warned that a false child is unclearable where a false seen-id is
+  // merely weakening. The warning was written; the guard was not.
+  const L = require('./canon-lib.js');
+  const parent = '72ce4477-f495-4306-ab5a-d768e61ac91c';
+  const ids = L.harvestSeen('Found 1 subtask(s) for task ' + UUID_A + ':\n- [pending] M11.1 [id: ' + parent + ']');
+  check('a uuid fragment is not harvested as an id', !ids.includes('ab5a-d768e61ac91c'), JSON.stringify(ids));
+  check('and the real uuid still is', ids.includes(parent));
+  check('a genuine col-<hex> slug is still harvested',
+    L.harvestSeen('column [id: col-9f3ab21c7d4e]').includes('col-9f3ab21c7d4e'));
+
+  // The end-to-end shape: listing a child, then completing it, must not be refused for a
+  // phantom sibling invented out of the parent's own id.
+  const sid = fresh();
+  gate('post', post(sid, MCP + 'list_subtasks', { parent_task_id: UUID_A },
+    'Found 1 subtask(s) for task ' + UUID_A + ':\n- [pending] leaf [id: ' + parent + ']'));
+  gate('post', post(sid, MCP + 'complete_task', { task_id: parent }, 'Task completed'));
+  const r = gate('pre', pre(sid, MCP + 'complete_task', { task_id: UUID_A }));
+  check('completing the parent after its only real child is not refused',
+    !/CANON-BOTTOM-UP/.test(denialOf(r) || ''), (denialOf(r) || '').slice(0, 150));
+}
+
+function caseGapReadBackLongList() {
+  console.log('\nGAP a read-back must survive a LONG list response');
+  // MEASURED ON A LIVE MACHINE, and it cost two gates being stood down. The ledger row is
+  // capped at 4 KB and over-long rows had their `ids` trimmed with slice(0, N) -- the FIRST
+  // N ids. But a read-back is always about a record just written, and a freshly created row
+  // is the LAST entry a list response returns. So the head-slice discarded exactly the id
+  // the obligation was waiting for.
+  //
+  // list_flow_clusters returned 104 clusters with the new one last; its id never reached the
+  // ledger, the obligation never discharged, and the gate then demanded a FILTERED re-read of
+  // a tool that takes no arguments at all -- an unclearable latch, produced entirely by the
+  // truncation. The workspace had to get busy before this could bite, which is why it shipped.
+  const uuidN = (n) => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
+
+  for (const [label, writeTool, readTool, made] of [
+    ['flow cluster   ', 'create_flow_cluster', 'list_flow_clusters', "Cluster 'New' created with ID "],
+    ['flow connection', 'create_flow_connection', 'list_flow_connections', 'Connection created between a and b with ID '],
+  ]) {
+    const sid = fresh();
+    gate('post', post(sid, MCP + writeTool, {}, made + UUID_B));
+
+    // The mapped read, shaped like the real tool: a whole-workspace listing long enough to
+    // blow the 4 KB ledger line several times over, with the new row in the MIDDLE.
+    //
+    // Position 78 of 121 is not arbitrary — it is where the real one landed. These listings
+    // are not ordered by creation, so "the newest is last" is false, and an earlier fix that
+    // kept both ends of the id list passed a version of this test that put the row last
+    // while still failing in production. The middle is the case that discriminates.
+    const lines = [];
+    for (let i = 0; i < 120; i++) {
+      if (i === 78) lines.push("- Row NEW | tasks (0): | color: rgba(0,0,0,0.1) [id: " + UUID_B + ']');
+      lines.push('- Row ' + i + ' | tasks (1): ' + uuidN(i)
+        + ' | color: rgba(99,102,241,0.15) | description: filler text to push this row well past the ledger cap [id: '
+        + uuidN(1000 + i) + ']');
+    }
+    gate('post', post(sid, MCP + readTool, {}, 'Found 121 row(s):\n' + lines.join('\n')));
+
+    const r = gate('stop', stop(sid));
+    check('a 121-row listing discharges the obligation for a MIDDLE id — ' + label,
+      !/CANON-READ-BACK/.test(blockOf(r) || ''), (blockOf(r) || '').slice(0, 160));
+  }
+
+  // The other side: a read that genuinely does NOT contain the written id must still owe.
+  const sid = fresh();
+  gate('post', post(sid, MCP + 'create_flow_cluster', {}, "Cluster 'New' created with ID " + UUID_B));
+  gate('post', post(sid, MCP + 'list_flow_clusters', {}, 'Found 1 row(s):\n- Row A [id: ' + UUID_C + ']'));
+  const r = gate('stop', stop(sid));
+  check('a listing WITHOUT the written id still leaves the obligation standing',
+    /CANON-READ-BACK/.test(blockOf(r) || ''), (blockOf(r) || '').slice(0, 160));
+}
+
 function caseGapCanonHomeDiscovery() {
   console.log('\nGAP the CLI and the hooks must resolve the SAME canon home');
   // MEASURED. CLAUDE_PLUGIN_DATA is set for a hook invocation and UNSET for a CLI one, and
@@ -1526,7 +1663,8 @@ function run() {
     caseP8, caseO1, caseS1, caseNoRepeat, caseBudget, caseEscapes, caseFailSafe, casePrivacy,
     caseLifecycle, caseTools,
     caseGapShellSurface, caseGapTreeFirstEffect, caseGapBulk, caseGapBulkResponseShape,
-    caseGapLedgerLineAlwaysParses, caseGapCanonHomeDiscovery, caseGapIdProvenance, caseGapScope,
+    caseGapLedgerLineAlwaysParses, caseGapProgressKeepsTheNetUp, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
+    caseGapIdProvenance, caseGapScope,
     caseDebtReadBack, caseDebtSeams, caseDebtThisTurn, caseDebtCloseout, caseDebtDegrades, caseDebtColdReturn,
     caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath];
   for (const c of cases) {
