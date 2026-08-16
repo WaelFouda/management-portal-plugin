@@ -601,6 +601,56 @@ const CODE_WRITE_RE = /open\s*\([^)]*['"][wax][b+]?['"]|write_?(?:file|text|byte
 /** A redirection to a file. `2>&1` and `>&2` are not that. */
 const REDIRECT_RE = /(?<![0-9&>=\-])>>?\s*(?!&)(?:"([^"]+)"|'([^']+)'|([^\s;|&<>()]+))/g;
 
+/**
+ * The same operator, found only where a SHELL would find it — outside quotes.
+ *
+ * MEASURED FALSE POSITIVE. `node -e '... Date.now() - mtime > 3600000 ...'` was refused as
+ * "writes 3600000 (via a redirection)". The `>` is a comparison inside a single-quoted
+ * argument; no shell would ever redirect there. Scanning the raw segment text cannot tell
+ * the difference, and the cost is not cosmetic: the same regex decides `shellMutation`, so
+ * ANY quoted `>` also made a read-only command look state-changing.
+ *
+ * Quoted spans are masked to a placeholder before the operator is located, which preserves
+ * offsets and the existing lookbehind exactly — then the TARGET is read back out of the
+ * ORIGINAL string, because a legitimate target is very often quoted (`> "my file.txt"`).
+ * Masking and then reading the mask would have swapped one wrong answer for another.
+ */
+function maskQuoted(s) {
+  let out = '';
+  let q = null;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q) {
+      // A backslash escape inside double quotes hides the next character, including a quote.
+      if (c === '\\' && q === '"' && i + 1 < s.length) { out += '\x01\x01'; i++; continue; }
+      if (c === q) { q = null; out += c; continue; }
+      out += '\x01';
+      continue;
+    }
+    if (c === "'" || c === '"') { q = c; out += c; continue; }
+    out += c;
+  }
+  return out;
+}
+
+const REDIRECT_OP_RE = /(?<![0-9&>=\-])>>?/g;
+const REDIRECT_TARGET_RE = /^>>?\s*(?!&)(?:"([^"]+)"|'([^']+)'|([^\s;|&<>()]+))/;
+
+/** Redirection targets on this command line, ignoring any `>` that is inside quotes. */
+function redirectTargets(text) {
+  const s = String(text || '');
+  if (s.indexOf('>') === -1) return [];
+  const masked = maskQuoted(s);
+  const out = [];
+  let m;
+  REDIRECT_OP_RE.lastIndex = 0;
+  while ((m = REDIRECT_OP_RE.exec(masked))) {
+    const t = s.slice(m.index).match(REDIRECT_TARGET_RE);
+    if (t) out.push(t[1] || t[2] || t[3]);
+  }
+  return out;
+}
+
 /** Shells and prefixes whose ARGUMENT is another command — `bash -c "npm install"`. */
 const SHELL_WRAPPERS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh', 'fish', 'cmd', 'powershell',
   'pwsh', 'env', 'nohup', 'sudo', 'doas', 'time', 'nice', 'xargs', 'winpty', 'busybox', 'start', 'exec']);
@@ -704,8 +754,7 @@ function shellMutation(cmd) {
     }
   }
   for (const seg of segs) {
-    REDIRECT_RE.lastIndex = 0;
-    if (REDIRECT_RE.test(seg.text)) return { kind: 'redirect', evidence: null };
+    if (redirectTargets(seg.text).length) return { kind: 'redirect', evidence: null };
   }
   return null;
 }
@@ -725,8 +774,7 @@ function shellWriteTargets(cmd) {
   };
   for (const seg of shellSegments(cmd, 0)) {
     let m;
-    REDIRECT_RE.lastIndex = 0;
-    while ((m = REDIRECT_RE.exec(seg.text))) push(m[1] || m[2] || m[3], 'a redirection');
+    for (const t of redirectTargets(seg.text)) push(t, 'a redirection');
     const nonFlag = seg.args.filter((a) => !FLAGGY(a));
     if (seg.head === 'tee') { if (nonFlag[0]) push(nonFlag[0], 'tee'); }
     if (seg.head === 'sed' && /(^|\s)-[a-z]*i/.test(seg.text)) {
@@ -1202,7 +1250,7 @@ module.exports = {
   normPath, normTarget, sha1, HOME, HOME_SOURCE, DIR_SESSIONS, DIR_RUNS, DIR_BYPROJ, ensureDirs, projHash, nowS,
   sessionKey, sessionFile, append, readLines, readFamily,
   harvestSeen, harvestArgIds, harvestIdHeads, headsVouchFor, trimIds, idShape, safeArgs, bareToolName,
-  shellStrings, shellSegments, shellMutation, shellWriteTargets, argWriteTargets, writeTargets,
+  shellStrings, shellSegments, shellMutation, shellWriteTargets, redirectTargets, argWriteTargets, writeTargets,
   parseBulkResponse, bulkInnerNames, responseText,
   sentinel, canonMode, gateArmed,
   resolveRun, saveRun, openRun, closeRun, spendBlock, blocksSpent, creditProgress, runFile, pointerFile,

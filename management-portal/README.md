@@ -32,7 +32,7 @@ key to create, paste or store. The plugin ships no `userConfig` prompt, and its 
 
 ---
 
-# The canon gates (1.6.1) — READ THE ESCAPE FIRST
+# The canon gates (1.6.2) — READ THE ESCAPE FIRST
 
 1.5.0 turns parts of the agent discipline from **reminders** into **hooks that refuse**. Before anything
 else, here is how to turn them off, because someone reading this section is usually reading it because
@@ -107,7 +107,7 @@ graph closure and final journal (`CANON-CLOSEOUT`).
 deny on the fourth single write cannot undo the first three), status discipline (`CANON-STATUS`), and
 completeness (`CANON-COMPLETE` — which names empty **fields** and never judges what is written in them).
 
-> ### ⚠️ Status, as of plugin 1.6.1 — three gates verified live, the rest armed
+> ### ⚠️ Status, as of plugin 1.6.2 — three gates verified live, the rest armed
 >
 > **The engine ships.** `scripts/canon-gate.js` is present, 2062 lines, emits a real `PreToolUse`
 > `permissionDecision: "deny"`, and `hooks/hooks.json` wires it into 8 of the 11 hook entries. The
@@ -163,6 +163,13 @@ node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" selftest   # fixture payloads 
 ```
 
 ## Known failure modes — named, not hidden
+
+- **A `>` inside quotes was read as a redirection — fixed in 1.6.2.** `node -e '... a - b > 3600000 ...'`
+  was refused by `CANON-TREE-FIRST` as *"writes 3600000 (via a redirection)"*. The `>` is a comparison
+  inside a quoted argument and no shell would redirect there. The nuisance was not the cost: the same
+  scan decides whether a command CHANGES STATE, so any quoted `>` also made a read-only command look
+  like a write, which is the `CANON-COORD-ROLE` premise too. Quoted spans are now masked before the
+  operator is located, while a genuinely quoted target — `> "my file.txt"` — is still read correctly.
 
 - **A long run used to lose its safety net permanently — fixed in 1.6.1, and worth knowing why.** Each
   gate has a per-run block budget (3), after which it degrades to a notice so it can never trap a session
@@ -463,7 +470,7 @@ remember.
 > ```
 >
 > Then **reload** (`/reload-plugins`) or restart Claude Code, and **verify before you trust it**: run
-> `/plugin` and confirm the installed version reads **1.6.1**. If it does not, you are running older code
+> `/plugin` and confirm the installed version reads **1.6.2**. If it does not, you are running older code
 > no matter what the repository says.
 >
 > **This is per machine.** A bump reaches nobody until each machine updates.

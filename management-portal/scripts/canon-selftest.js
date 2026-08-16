@@ -1469,6 +1469,52 @@ function caseGapLedgerLineAlwaysParses() {
   delete require.cache[require.resolve('./canon-lib.js')];
 }
 
+function caseGapQuotedAngleIsNotARedirect() {
+  console.log('\nGAP a `>` inside quotes is a comparison, not a redirection');
+  // MEASURED. `node -e '... Date.now() - mtime > 3600000 ...'` was REFUSED by
+  // CANON-TREE-FIRST as "writes 3600000 (via a redirection)". The `>` is a numeric
+  // comparison inside a single-quoted argument; no shell would redirect there.
+  //
+  // The cost was not cosmetic. The same regex decides shellMutation, so ANY quoted `>`
+  // also made a read-only command look state-changing — which is the CANON-COORD-ROLE
+  // premise too. A gate that refuses honest work is the failure this whole file exists
+  // to catch, and this one refused a read-only diagnostic.
+  const L = require('./canon-lib.js');
+  const cases = [
+    ["node -e 'if (a - b > 3600000) x'", [], 'a quoted comparison'],
+    ["node -e 'const q = a > b ? 1 : 2'", [], 'a quoted ternary'],
+    ["awk '{ if ($1 > 5) print }' data.txt", [], 'an awk comparison'],
+    ["grep -o 'a>b' f.txt", [], 'a > inside a search pattern'],
+    ['echo hi > out.txt', ['out.txt'], 'a real redirect'],
+    ['echo hi >> out.log', ['out.log'], 'a real append'],
+    ['echo hi > "my file.txt"', ['my file.txt'], 'a real redirect to a QUOTED path'],
+    ["node -e 'x > 1' > real.txt", ['real.txt'], 'quoted noise beside a real redirect'],
+    ['cmd 2>&1', [], '2>&1, which names no file'],
+  ];
+  for (const [cmd, want, label] of cases) {
+    const got = L.redirectTargets(cmd);
+    check('redirect scan sees ' + label,
+      JSON.stringify(got) === JSON.stringify(want), 'got ' + JSON.stringify(got));
+  }
+
+  // And end to end, through the gate that actually refused: a read-only node one-liner
+  // with a quoted `>` must not be treated as a project write.
+  const sid = fresh();
+  cli(['run-open', '--client', 'C', '--project', 'P', '--state', 'RUN']);
+  const probe = gate('pre', pre(sid, 'Bash', { command: "node -e 'const old = Date.now() - t > 3600000; console.log(old)'" }));
+  check('CANON-TREE-FIRST does not refuse a quoted comparison',
+    !/CANON-TREE-FIRST/.test(denialOf(probe) || ''), (denialOf(probe) || '').slice(0, 160));
+
+  // The other side, and the one that matters: a genuine redirect into the project IS
+  // still refused. An absolute path, because that is what the gate resolves — the same
+  // form every other CANON-TREE-FIRST fixture uses.
+  const target = path.join(PROJ, 'thing.ts');
+  const real = gate('pre', pre(sid, 'Bash', { command: 'echo x > "' + target + '"' }));
+  check('and a genuine redirect into the project is still refused',
+    /CANON-TREE-FIRST/.test(denialOf(real) || ''), (denialOf(real) || '').slice(0, 160));
+  check('  …and still names the file', /thing\.ts/i.test(denialOf(real) || ''));
+}
+
 function caseGapProgressKeepsTheNetUp() {
   console.log('\nGAP the tool people actually use marks a boundary, and progress restores the budget');
   // REPORTED BY THE OWNER, in these words: "I keep telling you to continue."
@@ -1663,7 +1709,7 @@ function run() {
     caseP8, caseO1, caseS1, caseNoRepeat, caseBudget, caseEscapes, caseFailSafe, casePrivacy,
     caseLifecycle, caseTools,
     caseGapShellSurface, caseGapTreeFirstEffect, caseGapBulk, caseGapBulkResponseShape,
-    caseGapLedgerLineAlwaysParses, caseGapProgressKeepsTheNetUp, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
+    caseGapLedgerLineAlwaysParses, caseGapQuotedAngleIsNotARedirect, caseGapProgressKeepsTheNetUp, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
     caseGapIdProvenance, caseGapScope,
     caseDebtReadBack, caseDebtSeams, caseDebtThisTurn, caseDebtCloseout, caseDebtDegrades, caseDebtColdReturn,
     caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath];

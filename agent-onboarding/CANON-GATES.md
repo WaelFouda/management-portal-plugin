@@ -156,6 +156,11 @@ must stay word-consistent between them.
 - **`bypassPermissions` makes a deny the only brake.** In an autonomous run there is no permission
   UI to override a gate — which is exactly why the primary escape is a **file** re-read on every
   invocation, not a flag fixed at session start.
+- **A quoted `>` was parsed as a redirection — fixed in 1.6.2.** The shell scan ran over raw segment
+  text, so a comparison inside a quoted argument (`node -e '... a > b ...'`) was reported as a file
+  write. It refused a read-only diagnostic, and because the same scan answers "does this command change
+  state", it also mis-classified read-only commands as mutating. Quoted spans are masked before the
+  operator is located; a quoted redirect TARGET is still resolved.
 - **A gate that budgets its own blocks can go silent for good — fixed in 1.6.1.** Every gate degrades to
   a notice after 3 blocks in a run, so it can never trap a session that genuinely cannot proceed. The
   counter was per-run and monotonic, so a run lasting a working day lost `CANON-ACCOUNT` by mid-morning
