@@ -12,7 +12,7 @@
       "name": "management-portal",
       "source": "./management-portal",
       "description": "Operate the management-portal MCP with the full agent discipline - the core loop, the three gates (read-after-write, completeness, task-breakdown), bottom-up completion, never-fabricate-ids, and board-first - now backed by the canon gates, hooks that refuse a call or a turn-end rather than merely reminding you, each with a documented one-line stand-down escape. Sign in with OAuth on first use; no API key to paste or store. Bundles the MCP server, the management-portal and team-chat-reachability skills, the canon-gates reference, the portal-operator and team-chat-watcher subagents, and the /portal, /rearm-watch, /portal-project, /portal-continue, /channel-coordinate, /channel-join, /portal-stand-down, /portal-rearm and /plain-english commands.",
-      "version": "1.7.4",
+      "version": "1.7.5",
       "author": {
         "name": "Wael Fouda"
       },

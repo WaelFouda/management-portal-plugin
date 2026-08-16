@@ -1,6 +1,6 @@
 {
   "name": "management-portal",
-  "version": "1.7.4",
+  "version": "1.7.5",
   "description": "Operate the management-portal MCP with the full agent discipline in one install - now ENFORCED by hooks, not merely advised. You sign in with OAuth on first use - no API key to paste, copy or store. Bundles the MCP server, the management-portal and team-chat-reachability skills, the canon-gates reference, the portal-operator and team-chat-watcher subagents, the /portal, /rearm-watch, /portal-project, /portal-continue, /channel-coordinate, /channel-join, /portal-stand-down, /portal-rearm and /plain-english commands, and the canon gates: PreToolUse denials that refuse a fabricated id or an out-of-order write, PostToolUse and Stop blocks that compel read-after-write and an account before a mid-run turn ends, turn-end advisories for bulk/status/completeness, and a documented stand-down escape for every one of them — with /portal-rearm to put them back.",
   "author": {
     "name": "Wael Fouda",

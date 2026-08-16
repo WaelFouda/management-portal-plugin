@@ -1729,6 +1729,57 @@ function caseGapReArmIsReachable() {
     !/not a mode|unknown/i.test(cli(['rearm', '--gate', 'all']).stdout || ''));
 }
 
+function caseGapSettleCallTakesThatId() {
+  console.log('\nGAP the call a gate NAMES must accept the id it prints');
+  // MEASURED 2026-08-17, two defects surfaced by one probe node.
+  //
+  // (1) THE NAMED CALL WAS MALFORMED. create_knowledge_graph_node's obligation is keyed on
+  //     the NODE id the write returned, but settleCall renders map[0] blindly and map[0]
+  //     was `get_knowledge_graph` — which takes a GRAPH id. So the gate instructed
+  //     `get_knowledge_graph("<node id>")`: a call that cannot succeed, printed with total
+  //     confidence. `get_knowledge_graph_node` was already in the list, sitting second.
+  //     Ordering is not cosmetic here — position 0 is what the agent is told to type.
+  const sid = fresh();
+  const b = blockOf(gate('post', post(sid, MCP + 'create_knowledge_graph_node',
+    { graph_id: UUID_A, label: 'probe' }, 'Node created [id: ' + UUID_B + ']')));
+  check('the named read is the one that accepts a NODE id',
+    /get_knowledge_graph_node\("?bbbbbbbb/.test(b || ''), (b || '').slice(0, 160));
+  check('  …and it is not the graph read handed a node id',
+    !/get_knowledge_graph\("?bbbbbbbb/.test(b || ''), (b || '').slice(0, 160));
+
+  // (2) A RECORD YOU DELETED CANNOT BE PROVEN TO PERSIST. The probe node was created, read
+  //     back through the graph, then deleted — which is the correct lifecycle for a test
+  //     artefact. The create's obligation survived the delete and became PERMANENTLY
+  //     undischargeable: no read can return an id that no longer exists, so the gate went
+  //     on demanding proof of persistence for something deliberately removed. The only
+  //     exit was a stand-down, which is how a correct gate teaches its own escape hatch.
+  // The control reads the STOP gate, not a second PostToolUse block: the gate does not
+  // repeat a block it has already spent, so "did it fire again" answers a different
+  // question than "is the obligation still outstanding". That mistake was made twice in
+  // this file already; it is written down here so it is not made a third time.
+  const sidC = fresh();
+  gate('post', post(sidC, MCP + 'create_task', { title: 'temp' }, 'Created task [id: ' + UUID_C + ']'));
+  const owed = blockOf(gate('stop', stop(sidC, false)));
+  check('(control) an un-deleted create stays outstanding at turn end',
+    /create_task/.test(owed || ''), (owed || '(no block)').slice(0, 160));
+
+  const sid2 = fresh();
+  gate('post', post(sid2, MCP + 'create_task', { title: 'temp' }, 'Created task [id: ' + UUID_C + ']'));
+  gate('post', post(sid2, MCP + 'delete_task', { task_id: UUID_C }, 'Task deleted'));
+  gate('post', post(sid2, MCP + 'list_tasks', {}, 'Task "other" [id: ' + UUID_A + ']'));
+  const after = blockOf(gate('stop', stop(sid2, false)));
+  check('deleting the record retires its create obligation',
+    !/create_task/.test(after || ''), (after || '').slice(0, 160));
+
+  // THE OTHER SIDE — deleting SOMETHING ELSE must not launder an unverified create.
+  const sid3 = fresh();
+  gate('post', post(sid3, MCP + 'create_task', { title: 'temp' }, 'Created task [id: ' + UUID_C + ']'));
+  gate('post', post(sid3, MCP + 'delete_task', { task_id: UUID_B }, 'Task deleted'));
+  const after3 = blockOf(gate('stop', stop(sid3, false)));
+  check('deleting a DIFFERENT record does not retire it',
+    /create_task/.test(after3 || ''), (after3 || '(no block)').slice(0, 160));
+}
+
 function caseGapBoundaryInsideABulk() {
   console.log('\nGAP a milestone delivered inside a bulk is still a phase boundary');
   // MEASURED 2026-08-17. Phase 10 was closed by delivering M10.2 and M10.4, each inside a
@@ -2063,7 +2114,7 @@ function run() {
     caseP8, caseO1, caseS1, caseNoRepeat, caseBudget, caseEscapes, caseFailSafe, casePrivacy,
     caseLifecycle, caseTools,
     caseGapShellSurface, caseGapTreeFirstEffect, caseGapBulk, caseGapBulkResponseShape,
-    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapBoardAndStatusEnforced, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapBriefReadBackIsDischargeable, caseGapBoundaryInsideABulk, caseGapReArmIsReachable, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
+    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapBoardAndStatusEnforced, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapBriefReadBackIsDischargeable, caseGapBoundaryInsideABulk, caseGapSettleCallTakesThatId, caseGapReArmIsReachable, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
     caseGapIdProvenance, caseGapScope,
     caseDebtReadBack, caseDebtSeams, caseDebtThisTurn, caseDebtCloseout, caseDebtDegrades, caseDebtColdReturn,
     caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath];

@@ -367,7 +367,12 @@ const WRITE_READ_MAP = {
   extract_knowledge_graph: ['get_knowledge_graph', 'semantic_search_knowledge_graph'],
   generate_knowledge_graph: ['get_knowledge_graph', 'list_knowledge_graphs'],
   regenerate_knowledge_graph: ['get_knowledge_graph', 'list_knowledge_graphs'],
-  create_knowledge_graph_node: ['get_knowledge_graph', 'get_knowledge_graph_node'],
+  // ORDER IS NOT COSMETIC HERE: settleCall renders map[0] with the obligation's id, and
+  // this obligation is keyed on the NODE id the write returned. With the graph read first
+  // the gate printed `get_knowledge_graph("<node id>")` — a graph-id parameter handed a
+  // node id, a call that cannot succeed, stated with total confidence. Both still
+  // discharge; only the one NAMED changes. Measured 2026-08-17.
+  create_knowledge_graph_node: ['get_knowledge_graph_node', 'get_knowledge_graph'],
   create_knowledge_graph_edge: ['get_knowledge_graph'],
   set_channel_policy: ['read_channel_policy'],
   create_chat_channel: ['read_chat_channels'],
@@ -614,6 +619,28 @@ function fold(rows, run) {
   const noteWrite = (tool, ids, t, tu, args) => {
     if (!WRITE_READ_MAP[tool]) return;
     const neg = isDeleteWrite(tool);
+    // A RECORD YOU DELETED CANNOT BE PROVEN TO PERSIST.
+    //
+    // Measured 2026-08-17. A probe node was created to test whether a table is published,
+    // read back, then deleted — the correct lifecycle for a test artefact. The create's
+    // obligation SURVIVED the delete and became permanently undischargeable: no read can
+    // ever return an id that no longer exists, so the gate went on demanding proof of
+    // persistence for a record that was deliberately removed, and the only way out was a
+    // stand-down. A gate whose sole exit is its own escape hatch teaches the escape hatch.
+    //
+    // So a successful delete RETIRES any outstanding positive obligation on that same id.
+    // It is scoped to the id, never to the tool: deleting some other record must not
+    // launder an unverified create, which is the assertion that keeps this a fix.
+    if (neg) {
+      const gone = (args && (args.node_id || args.task_id || args.board_id || args.note_id
+        || args.client_id || args.project_id || args.graph_id || args.edge_id || args.log_id))
+        || (ids && ids[0]) || null;
+      if (gone) {
+        for (const [k, o] of [...st.obligations]) {
+          if (!o.neg && o.id === gone) st.obligations.delete(k);
+        }
+      }
+    }
     // For a delete the RESPONSE id is the thing that must vanish, and so is the argument.
     const id = (ids && ids[0]) || (args && (args.board_id || args.task_id || args.project_id
       || args.client_id || args.graph_id || args.note_id)) || null;
