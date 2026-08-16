@@ -258,6 +258,8 @@ stores that an entry happened and never a word of what it said.**
 | `/portal-project`, `/portal-continue` | Start a disciplined run (client + project as arguments), and resume it without stopping between phases. |
 | `/channel-coordinate`, `/channel-join` | Join a Team Chat channel as coordinator or participant, under a name you choose. |
 | `/portal-stand-down` **command** | **The escape.** Stands one gate — or all of them — down, mid-session. |
+| `/portal-rearm` **command** | **The way back.** Re-arms them and names anything left off. The sentinels survive restarts, so a stand-down that was right on a broken build stays in force until this is typed. |
+| `/portal-rearm` **command** | **The way back.** Re-arms them, and names anything left off. Sentinels survive restarts. |
 | `/plain-english` **command** | Re-explains the current work in plain language — short, jargon-free, decision-first — and holds that register for the rest of the session. For handing a status to someone who does not work on the code. It changes how things are said, never what is true. |
 | **canon gate hooks** | `PreToolUse` and `PostToolUse` on matcher `.*`, plus `SessionStart`, `UserPromptSubmit`, `SubagentStart`/`SubagentStop`, `Stop` and `SessionEnd` — all routed through `canon-gate.js`, which carries a real `permissionDecision`. **The 1.4.3 `portal-gate.js`, which carried none and could only remind, is deleted.** |
 | `team-chat-reachability` **skill** | Teaches how to stay reachable on a channel watch roster; the re-arm rule. |

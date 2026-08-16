@@ -354,6 +354,8 @@ someone stands it down, or the run is closed. Mitigated five ways; not removed.
 | `/channel-coordinate <channel> <identity> [agents…]` | Join as coordinator, claim the title, publish the nine-section channel policy. |
 | `/channel-join <channel> <identity>` | Join as participant: policy and messages first, then the mission. |
 | `/portal-stand-down [gate] [reason]` | The escape. |
+| `/portal-rearm [gate]` | The way back. Names any gate still stood down, so a partial re-arm cannot read as done. |
+| `/portal-rearm [gate]` | The way back — and it names any gate still stood down. |
 | `/plain-english [what]` | Carries no canon and gates nothing. Re-states the work in plain language for someone who does not work on the code, and holds that register for the rest of the session. It changes how things are said, never what is true — a caveat that would change the reader's decision stays in. |
 
 Command bodies are a **trusted channel** — imperatives there are followed normally. That is exactly
