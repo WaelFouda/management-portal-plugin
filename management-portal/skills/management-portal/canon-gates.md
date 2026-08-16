@@ -77,7 +77,7 @@ other three. The advisory `portal-gate.js` that canon-gate replaces has been **d
 |---|---|---|
 | Team Chat turn-end ABSENT gate (`watch-alarm.js`) | refuses to end a turn | **ENFORCED** — shipping since 1.4.x, `decision: block`, verified on 2.1.222 and 2.1.85 |
 | `CANON-ID`, `CANON-READ-BACK`, `CANON-BOTTOM-UP` | refuses / blocks | **ENFORCED** — observed refusing real calls in a live session on 2026-08-16. See the correction below: the first `CANON-ID` refusals were **false**. |
-| Every other canon gate in the register below | refuses / blocks / advises | **ARMED** — shipped, wired, fixture-verified by 382 assertions. No live refusal observed for these. |
+| Every other canon gate in the register below | refuses / blocks / advises | **ARMED** — shipped, wired, fixture-verified by 390 assertions. No live refusal observed for these. |
 | The 1.4.3 read-after-write reminders (`portal-gate.js`) | reminder only | **GONE** — the file is deleted in 1.5.0. See "What 1.4.3 did" below |
 
 **The correction that matters more than the promotion.** Three gates are now ENFORCED, and the first live
@@ -104,7 +104,7 @@ this machine, at this HEAD. That gap is why the row above reads ARMED and not EN
 
 **Three tiers of evidence, and they are not interchangeable:** *fixture-verified* (the selftest
 spawns the real binary under an isolated `PORTAL_CANON_HOME`; no live session, no MCP server —
-the suite **currently reports 321 assertions**, which is an emergent count summed from `check()`
+the suite **currently reports 390 assertions**, which is an emergent count summed from `check()`
 calls and partly driven off `REGISTER`, so **never quote 321 as a constant**); *live-verified*
 (installed over the real plugin cache and driven with `claude -p --debug-file`); and *unverified*
 (designed and reasoned, not observed). One gate is deliberately **fixture-proven only**:

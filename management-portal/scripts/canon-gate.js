@@ -624,8 +624,29 @@ function fold(rows, run) {
     const prev = st.obligations.get(key);
     st.obligations.set(key, { w: tool, id, t, tu, neg, carried: Boolean(prev && prev.carried) });
   };
-  const clearReads = (tool, ids, sawResponse, heads) => {
+  const clearReads = (tool, ids, sawResponse, heads, readArgs) => {
     const idset = new Set(ids || []);
+    // WHAT THE READ ASKED FOR is evidence about the record it asked about — and for some
+    // writes it is the ONLY evidence obtainable.
+    //
+    // MEASURED 2026-08-17, first turn after a restart. The session card named the settling
+    // call itself: bulk([get_brief("<project id>"), get_task("<task id>")]). get_task
+    // settled. get_brief could not, and never could have:
+    //   · update_brief replies "✅ Brief updated" with no id, so noteWrite keys the
+    //     obligation on args.project_id;
+    //   · get_brief's reply carries the BRIEF's id and never echoes the project id;
+    //   · so `vouched(project id)` was false against every possible reply.
+    // The gate demanded a call, the call ran and returned, and the debt stood — twice,
+    // batched and standalone. Then it refused the edit that repairs it. A gate that
+    // refuses honest work is worse than one that is off, because it is believed.
+    //
+    // This does NOT weaken the rule to "trust the write". The guard below still requires a
+    // real, non-empty, successful response before anything discharges; all that changes is
+    // that the id may be matched against the read's own arguments as well as its body. A
+    // read of a DIFFERENT record still settles nothing, because its arguments name that
+    // other record — which is the assertion that decides whether this is a fix or a hole.
+    const argIds = new Set();
+    for (const v of Object.values(readArgs || {})) if (typeof v === 'string' && v) argIds.add(v);
     // `heads` are 8-char fingerprints of EVERY marked id in the response, kept because the
     // full id list is capped and a listing can carry hundreds. Position is no guide to which
     // id matters: the just-created row was measured at index 78 of 101 in one listing, so
@@ -642,8 +663,11 @@ function fold(rows, run) {
         if (sawResponse && (!o.id || !vouched(o.id))) st.obligations.delete(key);
         continue;
       }
+      // The response must have come back with SOMETHING. This is what keeps the argument
+      // channel above honest: a get_brief that returned "no brief found" carries no ids and
+      // no heads, so it never reaches the line below however perfectly its arguments match.
       if ((!ids || !ids.length) && (!heads || !heads.length)) continue;
-      if (!o.id || vouched(o.id)) st.obligations.delete(key);
+      if (!o.id || vouched(o.id) || argIds.has(o.id)) st.obligations.delete(key);
     }
   };
 
@@ -752,7 +776,6 @@ function fold(rows, run) {
       if (tool === 'create_journal' || tool === 'update_journal') st.journalWrites.push({ t, idx: ri, folder: a.folder_id || null });
       if (/^(get_journal|list_journals|search_journals)$/.test(tool)) st.journalReads.push({ t });
       if (tool === 'list_flow_clusters') st.flowClusterReads.push({ t });
-  if (/^(list_subtasks|list_tasks|get_task)$/.test(tool)) st.taskTreeReads.push({ t });
       if (/^(list_subtasks|list_tasks|get_task)$/.test(tool)) st.taskTreeReads.push({ t });
       if (tool === 'list_flow_connections') st.flowConnectionReads.push({ t });
 
@@ -760,7 +783,7 @@ function fold(rows, run) {
         st.portalWriteTimes.push(t);
         if (st.firstPortalWriteAt === null) st.firstPortalWriteAt = t;
       }
-      if (ok !== false) { noteWrite(tool, ids, t, r.tu, a); clearReads(tool, ids, true, heads); }
+      if (ok !== false) { noteWrite(tool, ids, t, r.tu, a); clearReads(tool, ids, true, heads, a); }
     };
 
     if (r.k === 'bulk') {

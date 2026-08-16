@@ -1688,6 +1688,86 @@ function caseGapQuotedAngleIsNotARedirect() {
   check('  …and still names the file', /thing\.ts/i.test(denialOf(real) || ''));
 }
 
+function caseGapBriefReadBackIsDischargeable() {
+  console.log('\nGAP the read a gate DEMANDS must be a read that can clear it');
+  // MEASURED ON A LIVE SESSION, 2026-08-17, on the first turn after a restart. The
+  // session opened by naming the exact call that would settle the debt:
+  //
+  //   ONE CALL SETTLES IT — bulk([get_brief("<project id>"), get_task("<task id>")])
+  //
+  // get_task settled. get_brief did not, and could not, and never would have:
+  //
+  //  · update_brief is keyed on project_id — it returns "✅ Brief updated" with no id at
+  //    all, so noteWrite falls through to args.project_id for the obligation's identity.
+  //  · get_brief's response carries the BRIEF's id and never once echoes the project id
+  //    it was called with.
+  //  · clearReads discharged only when the obligation's id came BACK in the response.
+  //
+  // So the gate demanded a call, the call ran, returned, and the debt stood. Twice —
+  // batched in a bulk and again standalone — before the mechanism was read rather than
+  // guessed at. Then it refused the very edit that repairs it, which is how a defect
+  // like this survives: it seals its own repair behind itself.
+  //
+  // It degrades after three refusals, so it is not a deadlock; it is worse in the way
+  // that matters. A gate that refuses honest work is worse than a gate that is off,
+  // because it is believed — and this one taught its own escape hatch instead of its
+  // rule. Any user who edits a brief hits it, and 1.7.0 is public.
+  //
+  // THE FIX IS NOT "TRUST THE WRITE". The response must still come back, and it must
+  // still be non-empty and successful. What is added is that a read which explicitly
+  // ASKED for the record by id is evidence about that record — which is the only
+  // evidence obtainable when the record's own reply cannot name it.
+  // ASSERT ON THE Stop GATE. Two earlier drafts of this test were thrown away, each after
+  // asking why a green assertion was green — the same discipline that turned up six hidden
+  // defects last week, applied to my own test:
+  //
+  //  1. A Pre denial on a following update_task. GREEN on unfixed code, because CANON-ID
+  //     refused that call FIRST for an unseen id, and "no read-back in the denial" is
+  //     trivially true whenever some other gate spoke.
+  //  2. A second PostToolUse block. GREEN on unfixed code, because the gate deliberately
+  //     does not repeat a block it has already spent — so that measured "did it fire
+  //     twice", not "is the obligation outstanding".
+  //
+  // CANON-READ-BACK-STOP reports the outstanding set at turn end. It is the only one of
+  // the three that answers the question actually being asked.
+  const settles = (label, readArgs, readReply) => {
+    const s = fresh();
+    const owed = gate('post', post(s, MCP + 'update_brief', { project_id: UUID_A, budget: 7260 }, '✅ Brief updated'));
+    check('(control) update_brief leaves an obligation — ' + label, Boolean(blockOf(owed)));
+    gate('post', post(s, MCP + 'get_brief', readArgs, readReply));
+    const b = blockOf(gate('stop', stop(s, false)));
+    return /CANON-READ-BACK-STOP/.test(b || '') ? (b || 'outstanding') : null;
+  };
+
+  // The real reply, verbatim in shape: the brief's id, never the project id it was called
+  // with. This is the whole defect in one line.
+  const briefReply = 'Brief: A project brief\nStatus: draft\nBudget: 7260.0 USD\nID: ' + UUID_B;
+  const right = settles('right project', { project_id: UUID_A }, briefReply);
+  check('get_brief settles the update_brief it was named to settle', right === null, right || '');
+
+  // The same shape through a bulk, because the canon tells the agent to batch and the
+  // owner's own session card names a bulk as THE settling call.
+  const s2 = fresh();
+  const owed2 = gate('post', post(s2, MCP + 'update_brief', { project_id: UUID_A, budget: 7260 }, '✅ Brief updated'));
+  check('(control) the bulk variant starts owing too', Boolean(blockOf(owed2)));
+  gate('post', post(s2, MCP + 'bulk', {
+    calls: [{ tool: 'get_brief', arguments: { project_id: UUID_A } }],
+  }, 'Ran 1/1 call(s); 0 failed.\n[0] get_brief: Brief: A project brief\nID: ' + UUID_B));
+  const sb = blockOf(gate('stop', stop(s2, false)));
+  const viaBulk = /CANON-READ-BACK-STOP/.test(sb || '') ? sb : null;
+  check('the same read batched into a bulk settles it too', viaBulk === null, viaBulk || '');
+
+  // THE OTHER SIDE — the half that decides whether this is a fix or a hole. Reading SOME
+  // OTHER project's brief must leave the debt exactly where it stood.
+  const wrong = settles('wrong project', { project_id: UUID_C }, 'Brief: someone else\nID: ' + UUID_B);
+  check('reading a DIFFERENT project\'s brief does NOT settle it', wrong !== null, '(ALLOWED)');
+
+  // And a read that named the right record but came back with nothing is not evidence
+  // that anything persisted. Arguments alone must never discharge.
+  const empty = settles('empty reply', { project_id: UUID_A }, 'No brief found for that project.');
+  check('an EMPTY get_brief does not settle it on its arguments alone', empty !== null, '(ALLOWED)');
+}
+
 function caseGapProgressKeepsTheNetUp() {
   console.log('\nGAP the tool people actually use marks a boundary, and progress restores the budget');
   // REPORTED BY THE OWNER, in these words: "I keep telling you to continue."
@@ -1882,7 +1962,7 @@ function run() {
     caseP8, caseO1, caseS1, caseNoRepeat, caseBudget, caseEscapes, caseFailSafe, casePrivacy,
     caseLifecycle, caseTools,
     caseGapShellSurface, caseGapTreeFirstEffect, caseGapBulk, caseGapBulkResponseShape,
-    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapBoardAndStatusEnforced, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
+    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapBoardAndStatusEnforced, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapBriefReadBackIsDischargeable, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
     caseGapIdProvenance, caseGapScope,
     caseDebtReadBack, caseDebtSeams, caseDebtThisTurn, caseDebtCloseout, caseDebtDegrades, caseDebtColdReturn,
     caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath];
