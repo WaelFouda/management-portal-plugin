@@ -64,6 +64,8 @@ and there is nothing to stand down — say that and carry on.
 | `CANON-KG-DESTRUCTIVE` | `regenerate_knowledge_graph` inside a run — it destroys the nodes and edges first |
 | `CANON-TREE-FIRST` | implementation edits before tasks + subtasks + a flow cluster + a connection exist |
 | `CANON-BOARD-FIRST` | a brief/proposal/phase/task while the run is in ALIGN and no alignment board exists |
+| `CANON-FLOW-READ` | a portal write after a phase boundary with the flow board unread — clusters AND relations |
+| `CANON-STATUS-SYNC` | a milestone set to delivered/approved with the task tree unread |
 
 **Compel an action after the call, or at turn end (PostToolUse / Stop):**
 

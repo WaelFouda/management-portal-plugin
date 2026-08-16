@@ -513,6 +513,8 @@ const REGISTER = [
   ['CANON-JOURNAL-PHASE', 'the first write after a phase boundary, unjournalled', 'create_journal(folder_id=...) + get_journal/list_journals', ['create_journal', 'update_journal', 'create_journal_folder']],
   ['CANON-KG-DESTRUCTIVE', 'regenerate/delete_knowledge_graph (both destroy nodes+edges)', 'extract_knowledge_graph, the incremental path', null],
   ['CANON-TREE-FIRST', 'any write to a project source file before the task tree and flow board exist', 'create_task + create_subtask + create_flow_cluster + create_flow_connection', null],
+  ['CANON-STATUS-SYNC', 'a milestone marked delivered with the task tree unread', 'list_subtasks / list_tasks / get_task', null],
+  ['CANON-FLOW-READ', 'a portal write after a phase boundary with the flow board unread', 'list_flow_clusters + list_flow_connections', null],
   ['CANON-BOARD-FIRST', 'brief/proposal/task writes before the alignment board', 'create_board + create_board_block(type mermaid) + read_board', null],
   ['CANON-READ-BACK', 'BLOCKS after a write until the mapped read returns the id', 'the mapped get_*/list_*, ideally batched in one bulk', null],
   ['CANON-ACCOUNT', 'BLOCKS a SILENT turn end while phases remain', 'continuing, or create_journal tagged "blocked"', null],
@@ -563,6 +565,14 @@ function fold(rows, run) {
     graphIds: new Set(),
     journalWrites: [],
     journalReads: [],
+    // The flow board is INTENT, not decoration — clusters group a phase and relations
+    // encode real dependency order. Tracked so CANON-FLOW-READ can require it is
+    // re-read at each phase boundary rather than trusted from memory.
+    flowClusterReads: [],
+    flowConnectionReads: [],
+    // Reads of the TASK TREE. A milestone cannot be known delivered without looking at
+    // the tasks that were supposed to deliver it — see CANON-STATUS-SYNC.
+    taskTreeReads: [],
     portalWriteTimes: [],
     postBlocks: 0,
     turnStart: 0,
@@ -741,6 +751,10 @@ function fold(rows, run) {
       if (tool === 'get_knowledge_graph' || tool === 'semantic_search_knowledge_graph') st.kgClose.read++;
       if (tool === 'create_journal' || tool === 'update_journal') st.journalWrites.push({ t, idx: ri, folder: a.folder_id || null });
       if (/^(get_journal|list_journals|search_journals)$/.test(tool)) st.journalReads.push({ t });
+      if (tool === 'list_flow_clusters') st.flowClusterReads.push({ t });
+  if (/^(list_subtasks|list_tasks|get_task)$/.test(tool)) st.taskTreeReads.push({ t });
+      if (/^(list_subtasks|list_tasks|get_task)$/.test(tool)) st.taskTreeReads.push({ t });
+      if (tool === 'list_flow_connections') st.flowConnectionReads.push({ t });
 
       if (isPortalWrite(tool)) {
         st.portalWriteTimes.push(t);
@@ -1312,6 +1326,84 @@ function evaluateCall(ctx, c) {
     }
   }
 
+  // ---- P5b CANON-FLOW-READ ----
+  //
+  // REPORTED BY THE OWNER, and the question was the right one: "if there are no hooks to
+  // enforce this, then why do we have it?"
+  //
+  // The canon tells the agent to read the flow board's clusters AND relations at every
+  // phase — they encode real intent, not decoration. Nothing checked that it ever did.
+  // CANON-TREE-FIRST requires a cluster and a connection to EXIST once, before the first
+  // source edit, and never looks again. So the board was write-once: built at planning
+  // time, then never consulted while the plan was executed.
+  //
+  // Measured on this very run. The board carried two relations — "repair notifications
+  // before judging realtime coverage" and "milestone events before the number that depends
+  // on them" — and a phase was delivered out of that order without anyone noticing, because
+  // the board was never read after it was drawn. A dependency nothing reads is a comment.
+  //
+  // Same shape as CANON-JOURNAL-PHASE: a boundary opens the obligation, the two reads close
+  // it, and only a portal WRITE is refused — reads are always free, including the two that
+  // clear it.
+  // JOURNAL_CLEARING is excluded for the same reason CANON-JOURNAL-PHASE excludes it, and
+  // the reason is sharper here: that gate DEMANDS a create_journal at a boundary. If this
+  // one refused it, two gates would each be waiting on a call the other forbids — the latch
+  // shape this project has already paid for six times. Journalling is always permitted; the
+  // board read is required before the REST of the phase's writes.
+  if (c.portalWrite && !JOURNAL_CLEARING.has(c.bare) && isRun && run.state === 'RUN'
+      && armed('CANON-FLOW-READ')) {
+    const b = lastBoundary(st);
+    if (b) {
+      const sawClusters = st.flowClusterReads.some((r) => r.t >= b.t);
+      const sawRelations = st.flowConnectionReads.some((r) => r.t >= b.t);
+      if (!sawClusters || !sawRelations) {
+        const missing = [!sawClusters ? 'list_flow_clusters' : null,
+          !sawRelations ? 'list_flow_connections' : null].filter(Boolean).join(' and ');
+        return { gate: 'CANON-FLOW-READ', reason:
+          '[portal-canon CANON-FLOW-READ] Refused. A phase boundary was recorded in this session '
+          + '(' + b.boundary + (b.id ? ' ' + b.id : '') + ' → status "' + b.status + '") and since that '
+          + 'boundary there is no ' + missing + ' in the tool stream. ' + site + ' is a portal write. '
+          + 'Canon: the flow board clusters AND its relations are read at every phase, because they '
+          + 'carry dependency order that exists nowhere else — a phase can be delivered out of the order '
+          + 'the board records, and nothing else will say so. This gate checks that both reads happened '
+          + 'after the boundary. It does not judge what the board contains.' };
+      }
+    }
+  }
+
+  // ---- P5c CANON-STATUS-SYNC ----
+  //
+  // REPORTED BY THE OWNER: "you are marking deliveries on the proposal but not on the task
+  // tree." He was right, and the record proved it — eleven milestones marked delivered in a
+  // day against two completed tasks, leaving the tree saying "pending" for work that had
+  // shipped, merged and was running in production.
+  //
+  // CANON-STATUS existed and could not catch it: it fires when TASKS are completed and the
+  // milestone was not updated — the opposite direction. The direction that actually happens,
+  // milestone marked done while its tasks rot, was free.
+  //
+  // This cannot verify the MAPPING: milestones and tasks share no foreign key, only a naming
+  // convention. So it does not pretend to. It enforces the one thing a gate honestly can —
+  // that the task tree was LOOKED AT before a milestone was declared delivered. Reading it is
+  // what makes the mismatch visible; every time today, one list_subtasks would have shown it.
+  if (c.portal && isRun && run.state === 'RUN' && armed('CANON-STATUS-SYNC')
+      && /^(update_proposal_milestone|update_milestone_status)$/.test(c.bare || '')) {
+    const status = String((c.input && (c.input.status || c.input.new_status)) || '');
+    if (/deliver|approv|complete|done/i.test(status)) {
+      const b = lastBoundary(st);
+      const since = b ? b.t : 0;
+      if (!st.taskTreeReads.some((r) => r.t >= since)) {
+        return { gate: 'CANON-STATUS-SYNC', reason:
+          '[portal-canon CANON-STATUS-SYNC] Refused. ' + site + ' sets a milestone to "' + status + '", and '
+          + 'no list_subtasks/list_tasks/get_task appears in the tool stream'
+          + (b ? ' since the last phase boundary' : ' in this session') + '. Canon (c): status follows the '
+          + 'work, and the work is the task tree — a milestone marked delivered over pending tasks leaves '
+          + 'the record claiming one thing and the tree another. This gate checks that the tree was read '
+          + 'before the claim. It cannot check that the tasks are actually done, and does not try.' };
+      }
+    }
+  }
+
   // ---- P6 CANON-KG-DESTRUCTIVE ----
   if (c.portal && armed('CANON-KG-DESTRUCTIVE') && isRun && run.state === 'RUN') {
     const gid = c.input.graph_id || null;
@@ -1423,6 +1515,8 @@ function simulateInner(st, tool, args) {
     st.journalWrites.push({ t, idx: Number.MAX_SAFE_INTEGER, folder: a.folder_id || null });
   }
   if (/^(get_journal|list_journals|search_journals)$/.test(tool)) st.journalReads.push({ t });
+  if (tool === 'list_flow_clusters') st.flowClusterReads.push({ t });
+  if (tool === 'list_flow_connections') st.flowConnectionReads.push({ t });
   // The close-out counters, so a close-out BATCHED into one bulk — which is exactly what
   // CANON-DEBT-CLOSEOUT's block text asks for — is not refused at its own last item.
   if (tool === 'create_knowledge_graph') st.kgClose.create++;

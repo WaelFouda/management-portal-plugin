@@ -308,6 +308,10 @@ function caseP5() {
   check('still refuses when written but not read back', Boolean(denialOf(half)));
 
   gate('post', post(sid, MCP + 'list_journals', { folder_id: UUID_C }, 'entries'));
+  // CANON-FLOW-READ also opens at a boundary, so the board has to be re-read too before
+  // an unrelated portal write. Journalling itself stays exempt from it — see that gate.
+  gate('post', post(sid, MCP + 'list_flow_clusters', {}, 'clusters'));
+  gate('post', post(sid, MCP + 'list_flow_connections', {}, 'connections'));
   const good = gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A }));
   check('allows once written AND read back', denialOf(good) === null, denialOf(good) || '');
 }
@@ -847,6 +851,8 @@ function caseGapBulk() {
     calls: [
       { tool: 'create_journal', arguments: { folder_id: UUID_A, title: 'phase 1' } },
       { tool: 'list_journals', arguments: { folder_id: UUID_A } },
+      { tool: 'list_flow_clusters', arguments: {} },
+      { tool: 'list_flow_connections', arguments: {} },
       { tool: 'create_task', arguments: { project_id: UUID_A } },
     ],
   })));
@@ -1571,6 +1577,71 @@ function caseGapSessionRefundsTheBudget() {
     Boolean(still.degraded && still.degraded['CANON-ACCOUNT']));
 }
 
+function caseGapBoardAndStatusEnforced() {
+  console.log('');
+  console.log('GAP the flow board and the task tree are ENFORCED, not merely recommended');
+  // REPORTED BY THE OWNER, twice, and both times he was right:
+  //   "you are marking deliveries on the proposal but not on the task tree"
+  //   "if there are no hooks to enforce this, then why do we have it?"
+  //
+  // Measured on a live run: eleven milestones marked delivered against two completed tasks,
+  // and a flow board carrying real dependency order that was drawn once and never read
+  // again. CANON-TREE-FIRST only required a cluster and a connection to EXIST, once, before
+  // the first source edit. CANON-STATUS only fired in the opposite direction — tasks done,
+  // milestone stale. The direction that actually happens was free.
+
+  // ---- CANON-FLOW-READ ----
+  let sid = fresh();
+  cli(['run-open', '--client', 'C', '--project', 'P', '--state', 'RUN']);
+  seedSeen(sid, UUID_A);
+  const beforeBoundary = gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A }));
+  check('flow board is not demanded before any boundary',
+    !/CANON-FLOW-READ/.test(denialOf(beforeBoundary) || ''));
+
+  gate('post', post(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }, 'ok [id: ' + UUID_B + ']'));
+  // Satisfy CANON-JOURNAL-PHASE first: it opens at the same boundary and is evaluated
+  // earlier, so without this the assertions below would be testing that gate instead.
+  gate('post', post(sid, MCP + 'create_journal', { folder_id: UUID_C }, 'Journal [id: ' + UUID_A + ']'));
+  gate('post', post(sid, MCP + 'list_journals', { folder_id: UUID_C }, 'entries'));
+  const unread = gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A }));
+  check('refuses a post-boundary write with the board unread',
+    /CANON-FLOW-READ/.test(denialOf(unread) || ''), (denialOf(unread) || '').slice(0, 120));
+
+  // Journalling must stay possible — CANON-JOURNAL-PHASE demands it at the same boundary.
+  const journal = gate('pre', pre(sid, MCP + 'create_journal', { folder_id: UUID_C, title: 'phase' }));
+  check('journalling is NOT refused by it (or the two gates deadlock)',
+    !/CANON-FLOW-READ/.test(denialOf(journal) || ''), (denialOf(journal) || '').slice(0, 120));
+
+  gate('post', post(sid, MCP + 'list_flow_clusters', {}, 'clusters'));
+  const half = gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A }));
+  check('clusters alone do not clear it — relations carry the ordering',
+    /CANON-FLOW-READ/.test(denialOf(half) || ''), (denialOf(half) || '').slice(0, 120));
+
+  gate('post', post(sid, MCP + 'list_flow_connections', {}, 'connections'));
+  const cleared = gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A }));
+  check('both reads clear it', !/CANON-FLOW-READ/.test(denialOf(cleared) || ''),
+    (denialOf(cleared) || '').slice(0, 120));
+
+  // ---- CANON-STATUS-SYNC ----
+  sid = fresh();
+  cli(['run-open', '--client', 'C2', '--project', 'P2', '--state', 'RUN']);
+  // NOT seedSeen(): it posts list_tasks, which is itself a task-tree read and would clear
+  // the gate under test. Seed the id through a milestone read instead.
+  gate('post', post(sid, MCP + 'list_milestones', { project_id: UUID_A }, 'M1 [id: ' + UUID_B + ']'));
+  const blind = gate('pre', pre(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }));
+  check('refuses delivering a milestone with the task tree unread',
+    /CANON-STATUS-SYNC/.test(denialOf(blind) || ''), (denialOf(blind) || '').slice(0, 120));
+
+  const notDone = gate('pre', pre(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'active' }));
+  check('and says nothing about a milestone merely going active',
+    !/CANON-STATUS-SYNC/.test(denialOf(notDone) || ''), (denialOf(notDone) || '').slice(0, 120));
+
+  gate('post', post(sid, MCP + 'list_subtasks', { parent_task_id: UUID_A }, 'Subtask [id: ' + UUID_C + ']'));
+  const looked = gate('pre', pre(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }));
+  check('reading the tree clears it', !/CANON-STATUS-SYNC/.test(denialOf(looked) || ''),
+    (denialOf(looked) || '').slice(0, 120));
+}
+
 function caseGapQuotedAngleIsNotARedirect() {
   console.log('\nGAP a `>` inside quotes is a comparison, not a redirection');
   // MEASURED. `node -e '... Date.now() - mtime > 3600000 ...'` was REFUSED by
@@ -1811,7 +1882,7 @@ function run() {
     caseP8, caseO1, caseS1, caseNoRepeat, caseBudget, caseEscapes, caseFailSafe, casePrivacy,
     caseLifecycle, caseTools,
     caseGapShellSurface, caseGapTreeFirstEffect, caseGapBulk, caseGapBulkResponseShape,
-    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
+    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapBoardAndStatusEnforced, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
     caseGapIdProvenance, caseGapScope,
     caseDebtReadBack, caseDebtSeams, caseDebtThisTurn, caseDebtCloseout, caseDebtDegrades, caseDebtColdReturn,
     caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath];

@@ -32,7 +32,7 @@ key to create, paste or store. The plugin ships no `userConfig` prompt, and its 
 
 ---
 
-# The canon gates (1.6.4) — READ THE ESCAPE FIRST
+# The canon gates (1.7.0) — READ THE ESCAPE FIRST
 
 1.5.0 turns parts of the agent discipline from **reminders** into **hooks that refuse**. Before anything
 else, here is how to turn them off, because someone reading this section is usually reading it because
@@ -96,8 +96,10 @@ agree.** `skills/management-portal/canon-gates.md` is the **source of truth**; t
 (`CANON-BOTTOM-UP`), a coordinator implementing instead of delegating (`CANON-COORD-ROLE`), a participant
 acting before reading the channel policy (`CANON-POLICY-FIRST`), skipping the journal at a phase boundary
 (`CANON-JOURNAL-PHASE`), destroying a knowledge graph with `regenerate_*` (`CANON-KG-DESTRUCTIVE`),
-editing implementation files before the task tree exists (`CANON-TREE-FIRST`), and writing the
-brief/proposal before the alignment board (`CANON-BOARD-FIRST`).
+editing implementation files before the task tree exists (`CANON-TREE-FIRST`), writing the
+brief/proposal before the alignment board (`CANON-BOARD-FIRST`), a portal write after a phase
+boundary with the flow board unread (`CANON-FLOW-READ`), and marking a milestone delivered with
+the task tree unread (`CANON-STATUS-SYNC`).
 
 **Compulsions cover:** read-after-write (`CANON-READ-BACK`, `CANON-READ-BACK-STOP`), ending a mid-run
 turn without an account of yourself (`CANON-ACCOUNT`), and closing a run without its summary board,
@@ -107,7 +109,7 @@ graph closure and final journal (`CANON-CLOSEOUT`).
 deny on the fourth single write cannot undo the first three), status discipline (`CANON-STATUS`), and
 completeness (`CANON-COMPLETE` — which names empty **fields** and never judges what is written in them).
 
-> ### ⚠️ Status, as of plugin 1.6.4 — three gates verified live, the rest armed
+> ### ⚠️ Status, as of plugin 1.7.0 — three gates verified live, the rest armed
 >
 > **The engine ships.** `scripts/canon-gate.js` is present, 2062 lines, emits a real `PreToolUse`
 > `permissionDecision: "deny"`, and `hooks/hooks.json` wires it into 8 of the 11 hook entries. The
@@ -485,7 +487,7 @@ remember.
 > ```
 >
 > Then **reload** (`/reload-plugins`) or restart Claude Code, and **verify before you trust it**: run
-> `/plugin` and confirm the installed version reads **1.6.4**. If it does not, you are running older code
+> `/plugin` and confirm the installed version reads **1.7.0**. If it does not, you are running older code
 > no matter what the repository says.
 >
 > **This is per machine.** A bump reaches nobody until each machine updates.

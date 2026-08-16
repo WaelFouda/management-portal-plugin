@@ -65,7 +65,7 @@ carries one of exactly four states, and **no state is ever quietly rounded up to
 | **ADVISORY** | Verified to only inject text. It can be ignored, and sometimes should be. |
 | **PENDING** | Neither the code nor the evidence. The design exists; nothing else does. Treat as advisory until proven. |
 
-### As of 2026-08-16 — plugin 1.6.4, three gates are ENFORCED and the first refusals were WRONG
+### As of 2026-08-17 — plugin 1.7.0, and two rules stopped being prose
 
 **The engine ships.** `scripts/canon-gate.js` is present, 2062 lines, and emits a real `PreToolUse`
 `hookSpecificOutput.permissionDecision: "deny"`. `hooks/hooks.json` holds **11 hook entries**, and
@@ -77,7 +77,7 @@ other three. The advisory `portal-gate.js` that canon-gate replaces has been **d
 |---|---|---|
 | Team Chat turn-end ABSENT gate (`watch-alarm.js`) | refuses to end a turn | **ENFORCED** — shipping since 1.4.x, `decision: block`, verified on 2.1.222 and 2.1.85 |
 | `CANON-ID`, `CANON-READ-BACK`, `CANON-BOTTOM-UP` | refuses / blocks | **ENFORCED** — observed refusing real calls in a live session on 2026-08-16. See the correction below: the first `CANON-ID` refusals were **false**. |
-| Every other canon gate in the register below | refuses / blocks / advises | **ARMED** — shipped, wired, fixture-verified by 374 assertions. No live refusal observed for these. |
+| Every other canon gate in the register below | refuses / blocks / advises | **ARMED** — shipped, wired, fixture-verified by 382 assertions. No live refusal observed for these. |
 | The 1.4.3 read-after-write reminders (`portal-gate.js`) | reminder only | **GONE** — the file is deleted in 1.5.0. See "What 1.4.3 did" below |
 
 **The correction that matters more than the promotion.** Three gates are now ENFORCED, and the first live
@@ -236,6 +236,8 @@ cannot hide behind another gate's reason.
 | Gate | Blocks when | Clears by |
 |---|---|---|
 | **CANON-READ-BACK** | A portal write has no mapped read carrying the same id. Once per turn, 12 per session. **Deletes clear on ABSENCE** — the block text says so, because an id coming *back* after a delete is proof the delete failed. | The mapped read from the write→read map (`reference.md` §3) — ideally one `bulk` of them. |
+| **CANON-FLOW-READ** | A portal write after a phase boundary with the flow board unread. The board carries dependency order that exists nowhere else, and a phase can be delivered out of that order with nothing to say so. | `list_flow_clusters` **and** `list_flow_connections` since the boundary. Clusters alone do not clear it — the relations are the ordering. Journalling is exempt, or this and CANON-JOURNAL-PHASE deadlock. |
+| **CANON-STATUS-SYNC** | Setting a milestone to `delivered`/`approved` with the task tree unread. Measured: eleven milestones delivered in a day against two completed tasks, leaving the tree claiming "pending" for shipped work. | `list_subtasks` / `list_tasks` / `get_task` since the boundary. It CANNOT verify the mapping — milestones and tasks share no key, only a naming convention — so it enforces the one thing it honestly can: that you looked. |
 | **CANON-ACCOUNT** | A turn is ending with phases remaining and no journal entry written this turn. Budget 3 per run, **refunded by progress since 1.6.1 and by a new session since 1.6.4**. | Continue into the next phase's first real step, **or** journal what stopped you, tagged `blocked`. You may not stop silently; you may always stop with an account. |
 | **CANON-READ-BACK-STOP** | Read-back obligations are still open at turn end. Budget 3. ⚠ **Not in `REGISTER`** — so it appears on neither the canon card nor `doctor`. | The same bulk read. |
 | **CANON-CLOSEOUT** | All phases are terminal but the summary board, the knowledge-graph closure, or the final journal entry is missing. Budget 2. | Whichever the reason names. When nothing is missing it **auto-closes the run**. |

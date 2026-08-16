@@ -170,6 +170,15 @@ must stay word-consistent between them.
   write. It refused a read-only diagnostic, and because the same scan answers "does this command change
   state", it also mis-classified read-only commands as mutating. Quoted spans are masked before the
   operator is located; a quoted redirect TARGET is still resolved.
+- **Two rules were canon-by-prose until 1.7.0, and the owner caught both.** The flow board was
+  write-once: `CANON-TREE-FIRST` required a cluster and a connection to EXIST before the first
+  source edit and never looked again, so dependency order recorded on the board was never read
+  while the plan was executed. And `CANON-STATUS` only fired when TASKS were done and the
+  milestone was stale — never the reverse, which is the direction that actually happens:
+  measured at eleven milestones delivered against two completed tasks in one day.
+  `CANON-FLOW-READ` and `CANON-STATUS-SYNC` close both. Neither can verify the CONTENT — a gate
+  cannot know whether a task is really finished, and milestones and tasks share no key — so both
+  enforce the honest thing instead: that the record was read before the claim was made.
 - **A restart did not restore the budget either — fixed in 1.6.4.** The run outlives the session, so the
   silenced gate survived every restart for the rest of the day. A new session now refunds it; a session that
   then genuinely wedges still exhausts its own three and cannot be trapped.
