@@ -55,15 +55,17 @@ described in the plugin README as a gate. Combined with G4 — Pre/PostToolUse `
 being unproven on 2.1.231 — those two reminders may have been reaching nobody at all for their
 entire service life.
 
-**As of 1.5.0 that file is deleted.** `scripts/canon-gate.js` replaces it: 2062 lines, a real
+**As of 1.5.0 that file is deleted.** `scripts/canon-gate.js` replaces it: 2448 lines as of 1.7.8, a real
 `PreToolUse` `permissionDecision: "deny"`, wired into 8 of the 11 entries in `hooks/hooks.json`.
 **State the replacement precisely.** What is now true is that the engine **ships**. What is *not* yet
 true is that anyone has watched it refuse a live call on this merged build — its gates are
 **fixture-verified** (`scripts/canon-selftest.js` spawns the real binary under an isolated
-`PORTAL_CANON_HOME`; the suite **currently reports 321 assertions**, an emergent count partly driven
+`PORTAL_CANON_HOME`; the suite **currently reports 425 assertions**, an emergent count partly driven
 off `REGISTER`, so **never quote 321 as a constant**) and several were live-verified on the engine
 lane before the merge, over bytes identical to these. The one place that verdict lives is the status
-board in `plugin/skills/management-portal/canon-gates.md`, where it reads **ARMED, not ENFORCED**.
+board in `plugin/skills/management-portal/canon-gates.md`. As of 1.7.8 it reads **ENFORCED** for three
+gates — `CANON-ID`, `CANON-READ-BACK` and `CANON-BOTTOM-UP`, observed refusing real calls on
+2026-08-16, and the first `CANON-ID` refusals were **false** — and **ARMED, not ENFORCED** for the rest.
 
 > The lesson generalises past this file: **"produced no visible effect" and "did not execute" look
 > identical from inside a conversation.** Every gate this project ships must therefore be provable
@@ -89,7 +91,7 @@ This is not hypothetical. The session that wrote this file had the portal tools 
 have matched. **On that install every read-after-write hook was silently dead.**
 
 **1.5.0 takes the fix.** The `PreToolUse` and `PostToolUse` entries now match **`.*`** and scope at
-**runtime** against a frozen set of **257** portal tool names — a raw name is portal iff it matches
+**runtime** against a frozen set of **257** portal tool names (**263** as of 1.7.8) — a raw name is portal iff it matches
 `^mcp__.+?__(.+)$` and the tail is in the set, so an unknown MCP server is **ignored rather than
 gated**, keeping Supabase, Desktop Commander, chrome-devtools and playwright out of the blast radius.
 Non-portal tools are judged purely by **argument shape** — does a key carry a shell command line,
@@ -179,6 +181,25 @@ must stay word-consistent between them.
   `CANON-FLOW-READ` and `CANON-STATUS-SYNC` close both. Neither can verify the CONTENT — a gate
   cannot know whether a task is really finished, and milestones and tasks share no key — so both
   enforce the honest thing instead: that the record was read before the claim was made.
+- **The documented knowledge-graph close-out could never pass — fixed in 1.7.8.** The canon attaches
+  sources in ONE call, `add_source_to_knowledge_graph(graph_id, items:[…])`, but `CANON-CLOSEOUT`
+  counted source kinds only from a top-level `source_type`, and the ledger's allow-list dropped `items`
+  — so the documented call scored zero kinds against a rule wanting three. The ledger now keeps the type
+  strings only (`item_types`: deduped, capped at 20, never an id, title or config) and the gate counts
+  `items[].type` and `create_knowledge_graph`'s `sources[].type`, single-call and in-bulk alike. Related
+  earlier graphs (`knowledge_graph`) and GitHub repos (`github_repo`) count like any other kind.
+- **Reply and forward owed a read-back and were never asked — fixed in 1.7.7.** Five tools shipped
+  outside the gate's inventory and write→read map, and an unmapped write carries no obligation at all.
+  Reply and forward are the class that carries another person's words and attachment across a hop —
+  exactly where a lossy quote hides behind a success string. They now owe `read_inbox`,
+  `read_channel_messages`/`read_dm_messages`, and `read_dm_conversations` for `mark_dm_read`;
+  `transcribe_voice_message` is inventoried but deliberately unmapped, because it is read-shaped.
+- **The settling call named a read that could never settle — fixed in 1.7.6.** The gate printed its
+  settling `bulk` with the id the WRITE returned, not the id the READ takes: `list_subtasks` was handed
+  the just-created child (empty by construction) and `get_proposal_detail` a proposal id. Eight clean,
+  empty reads that looked like data loss. Third instance of one defect, so the rule became **data** —
+  `READ_ARG_SOURCE` names the argument each mapped read is called with, and the obligation keys on that
+  owner id.
 - **A restart did not restore the budget either — fixed in 1.6.4.** The run outlives the session, so the
   silenced gate survived every restart for the rest of the day. A new session now refunds it; a session that
   then genuinely wedges still exhausts its own three and cannot be trapped.
@@ -215,12 +236,13 @@ build. That distinction is the whole reason this file exists, so it is stated he
 
 - **The engine shipping is not the same fact as the engine being verified here, and they must never
   be collapsed.** `canon-gate.js` now ships and is wired in — that half is settled, and the old line
-  "the engine lane has not pushed it" is dead. The other half is not: **no live refusal has been
-  observed against this merged build.** The gates are **fixture-verified**, and several were
-  live-verified on the engine lane over bytes identical to these, but *fixture-verified* and
+  "the engine lane has not pushed it" is dead. The other half is settled for three gates only:
+  `CANON-ID`, `CANON-READ-BACK` and `CANON-BOTTOM-UP` were observed refusing real calls on 2026-08-16.
+  **For every other gate no live refusal has been observed.** Those are **fixture-verified**, and several
+  were live-verified on the engine lane over bytes identical to these, but *fixture-verified* and
   *live-verified on this tree* are different claims. The one place that verdict lives is the status
-  board in `plugin/skills/management-portal/canon-gates.md`, where it reads **ARMED**. Until it reads
-  **ENFORCED**, no doc may say a canon gate has been seen protecting anyone on this build.
+  board in `plugin/skills/management-portal/canon-gates.md`, where they read **ARMED**. Until a gate
+  reads **ENFORCED** there, no doc may say it has been seen protecting anyone on this build.
 - **One gate is fixture-proven only, permanently so far:** `CANON-ID`'s provenance split has never
   been live-verified, **because the live model declined to fabricate an id at all.** A live
   `CANON-ID` test that passes may be passing because the model refused to invent an id rather than

@@ -66,9 +66,9 @@ carries one of exactly four states, and **no state is ever quietly rounded up to
 | **ADVISORY** | Verified to only inject text. It can be ignored, and sometimes should be. |
 | **PENDING** | Neither the code nor the evidence. The design exists; nothing else does. Treat as advisory until proven. |
 
-### As of 2026-08-17 — plugin 1.7.0, and two rules stopped being prose
+### As of 2026-09-27 — plugin 1.7.8 (two rules stopped being prose in 1.7.0)
 
-**The engine ships.** `scripts/canon-gate.js` is present, 2062 lines, and emits a real `PreToolUse`
+**The engine ships.** `scripts/canon-gate.js` is present, 2448 lines, and emits a real `PreToolUse`
 `hookSpecificOutput.permissionDecision: "deny"`. `hooks/hooks.json` holds **11 hook entries**, and
 canon-gate owns **8** of them — one on each of `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
 `PostToolUse`, `SubagentStart`, `SubagentStop`, `Stop` and `SessionEnd`; `watch-alarm.js` owns the
@@ -78,7 +78,7 @@ other three. The advisory `portal-gate.js` that canon-gate replaces has been **d
 |---|---|---|
 | Team Chat turn-end ABSENT gate (`watch-alarm.js`) | refuses to end a turn | **ENFORCED** — shipping since 1.4.x, `decision: block`, verified on 2.1.222 and 2.1.85 |
 | `CANON-ID`, `CANON-READ-BACK`, `CANON-BOTTOM-UP` | refuses / blocks | **ENFORCED** — observed refusing real calls in a live session on 2026-08-16. See the correction below: the first `CANON-ID` refusals were **false**. |
-| Every other canon gate in the register below | refuses / blocks / advises | **ARMED** — shipped, wired, fixture-verified by 398 assertions. No live refusal observed for these. |
+| Every other canon gate in the register below | refuses / blocks / advises | **ARMED** — shipped, wired, fixture-verified by 425 assertions. No live refusal observed for these. |
 | The 1.4.3 read-after-write reminders (`portal-gate.js`) | reminder only | **GONE** — the file is deleted in 1.5.0. See "What 1.4.3 did" below |
 
 **The correction that matters more than the promotion.** Three gates are now ENFORCED, and the first live
@@ -105,7 +105,7 @@ this machine, at this HEAD. That gap is why the row above reads ARMED and not EN
 
 **Three tiers of evidence, and they are not interchangeable:** *fixture-verified* (the selftest
 spawns the real binary under an isolated `PORTAL_CANON_HOME`; no live session, no MCP server —
-the suite **currently reports 398 assertions**, which is an emergent count summed from `check()`
+the suite **currently reports 425 assertions**, which is an emergent count summed from `check()`
 calls and partly driven off `REGISTER`, so **never quote 321 as a constant**); *live-verified*
 (installed over the real plugin cache and driven with `claude -p --debug-file`); and *unverified*
 (designed and reasoned, not observed). One gate is deliberately **fixture-proven only**:
@@ -134,7 +134,7 @@ Worth knowing, because it is the reason this whole effort exists:
   match — so it was **inert** for a claude.ai-connector install (`mcp__claude_ai_management-portal__*`)
   and for a UUID-named install (`mcp__<uuid>__*`). Both spellings are live in the wild. **1.5.0 fixes
   this the only way that generalises:** the `PreToolUse` and `PostToolUse` matchers are now `.*`, and
-  the scoping happens **at runtime** against a frozen set of 257 portal tool names. A tool outside
+  the scoping happens **at runtime** against a frozen set of 257 portal tool names (263 as of 1.7.8). A tool outside
   that set is never subject to a portal invariant, which is what keeps Supabase, Desktop Commander,
   chrome-devtools and playwright out of the blast radius. **Never enumerate install spellings in a
   regex again** — that is how this broke in the first place.
@@ -236,12 +236,12 @@ cannot hide behind another gate's reason.
 
 | Gate | Blocks when | Clears by |
 |---|---|---|
-| **CANON-READ-BACK** | A portal write has no mapped read carrying the same id. Once per turn, 12 per session. **Deletes clear on ABSENCE** — the block text says so, because an id coming *back* after a delete is proof the delete failed. | The mapped read from the write→read map (`reference.md` §3) — ideally one `bulk` of them. |
+| **CANON-READ-BACK** | A portal write has no mapped read carrying the same id. Once per turn, 12 per session. **Deletes clear on ABSENCE** — the block text says so, because an id coming *back* after a delete is proof the delete failed. | The mapped read from the write→read map (`reference.md` §3) — ideally one `bulk` of them. **Since 1.7.6** the settling call is printed with the id the read TAKES (`READ_ARG_SOURCE`) — for a subtask that is its parent, not the new child. **Since 1.7.7** inbox reply/forward (`read_inbox`), `forward_chat_message` (`read_channel_messages` or `read_dm_messages`) and `mark_dm_read` (`read_dm_conversations`) owe one too. |
 | **CANON-FLOW-READ** | A portal write after a phase boundary with the flow board unread. The board carries dependency order that exists nowhere else, and a phase can be delivered out of that order with nothing to say so. | `list_flow_clusters` **and** `list_flow_connections` since the boundary. Clusters alone do not clear it — the relations are the ordering. Journalling is exempt, or this and CANON-JOURNAL-PHASE deadlock. |
 | **CANON-STATUS-SYNC** | Setting a milestone to `delivered`/`approved` with the task tree unread. Measured: eleven milestones delivered in a day against two completed tasks, leaving the tree claiming "pending" for shipped work. | `list_subtasks` / `list_tasks` / `get_task` since the boundary. It CANNOT verify the mapping — milestones and tasks share no key, only a naming convention — so it enforces the one thing it honestly can: that you looked. |
 | **CANON-ACCOUNT** | A turn is ending with phases remaining and no journal entry written this turn. Budget 3 per run, **refunded by progress since 1.6.1 and by a new session since 1.6.4**. | Continue into the next phase's first real step, **or** journal what stopped you, tagged `blocked`. You may not stop silently; you may always stop with an account. |
 | **CANON-READ-BACK-STOP** | Read-back obligations are still open at turn end. Budget 3. ⚠ **Not in `REGISTER`** — so it appears on neither the canon card nor `doctor`. | The same bulk read. |
-| **CANON-CLOSEOUT** | All phases are terminal but the summary board, the knowledge-graph closure, or the final journal entry is missing. Budget 2. | Whichever the reason names. When nothing is missing it **auto-closes the run**. |
+| **CANON-CLOSEOUT** | All phases are terminal but the summary board, the knowledge-graph closure, or the final journal entry is missing. The closure needs ≥3 source **kinds**, counted from `source_type` **and** every `items[].type` (and `create_knowledge_graph`'s `sources[].type`) — related graphs (`knowledge_graph`) and repos (`github_repo`) count like any other kind. Budget 2. | Whichever the reason names. When nothing is missing it **auto-closes the run**. |
 
 Exceeding a Stop budget writes `run.degraded[gate]` and that gate becomes **permanently advisory for
 that run**. **A Stop gate blocks at most once per turn, by design** — see the honest limits below.
@@ -355,7 +355,6 @@ someone stands it down, or the run is closed. Mitigated five ways; not removed.
 | `/channel-join <channel> <identity>` | Join as participant: policy and messages first, then the mission. |
 | `/portal-stand-down [gate] [reason]` | The escape. |
 | `/portal-rearm [gate]` | The way back. Names any gate still stood down, so a partial re-arm cannot read as done. |
-| `/portal-rearm [gate]` | The way back — and it names any gate still stood down. |
 | `/plain-english [what]` | Carries no canon and gates nothing. Re-states the work in plain language for someone who does not work on the code, and holds that register for the rest of the session. It changes how things are said, never what is true — a caveat that would change the reader's decision stays in. |
 
 Command bodies are a **trusted channel** — imperatives there are followed normally. That is exactly

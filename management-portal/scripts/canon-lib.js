@@ -867,7 +867,33 @@ function safeArgs(toolInput) {
       out[k] = v.length > 64 ? v.slice(0, 64) : v;
     }
   }
+  const kinds = sourceKinds(toolInput);
+  if (kinds.length) out.item_types = kinds;
   return out;
+}
+
+/**
+ * The KINDS in a knowledge-graph source list — `add_source_to_knowledge_graph(items:[…])` and
+ * `create_knowledge_graph(sources:[…])` — and nothing else. The close-out counts kinds, and the
+ * documented call carries them only inside `items`, which the allow-list rightly drops: an item
+ * carries ids, titles and a journal filter config, none of which the ledger may keep. So only
+ * the `type` strings survive — enum-shaped, deduped, capped at 20.
+ */
+function sourceKinds(toolInput) {
+  const kinds = new Set();
+  if (!toolInput || typeof toolInput !== 'object') return [];
+  for (const key of ['items', 'sources']) {
+    let list = toolInput[key];
+    if (typeof list === 'string') { try { list = JSON.parse(list); } catch (_) { list = null; } }
+    if (!Array.isArray(list)) continue;
+    for (let it of list) {
+      if (typeof it === 'string') { try { it = JSON.parse(it); } catch (_) { continue; } }
+      const ty = it && typeof it === 'object' ? it.type : null;
+      if (typeof ty === 'string' && /^[a-z][a-z0-9_]{0,31}$/.test(ty)) kinds.add(ty);
+      if (kinds.size >= 20) return [...kinds];
+    }
+  }
+  return [...kinds];
 }
 
 // ---------------------------------------------------------------------------
@@ -1275,7 +1301,7 @@ function readStdin(cb) {
 module.exports = {
   normPath, normTarget, sha1, HOME, HOME_SOURCE, DIR_SESSIONS, DIR_RUNS, DIR_BYPROJ, ensureDirs, projHash, nowS,
   sessionKey, sessionFile, append, readLines, readFamily,
-  harvestSeen, harvestArgIds, harvestIdHeads, headsVouchFor, trimIds, idShape, safeArgs, bareToolName,
+  harvestSeen, harvestArgIds, harvestIdHeads, headsVouchFor, trimIds, idShape, safeArgs, sourceKinds, bareToolName,
   shellStrings, shellSegments, shellMutation, shellWriteTargets, redirectTargets, argWriteTargets, writeTargets,
   parseBulkResponse, bulkInnerNames, responseText,
   sentinel, canonMode, gateArmed,

@@ -82,23 +82,42 @@ Generate the key in the web app → **Settings → API Keys → Generate**.
 | `portal-operator` **subagent** | Runs the portal under the discipline (portal tools only, no `delete_*`). |
 | `team-chat-watcher` **subagent** | The background loop you spawn; spawning it is what actually makes you reachable. |
 | `/portal` **command** | Dispatches the `portal-operator` subagent for a disciplined run. |
+| `/portal-project`, `/portal-continue` | Start a disciplined run for a client + project, and resume it without stopping between phases. |
+| `/channel-coordinate`, `/channel-join` | Join a Team Chat channel as coordinator or participant, under a name you choose. |
+| `/portal-stand-down`, `/portal-rearm` | **The escape** from a canon gate, and **the way back**. |
+| `/plain-english` **command** | Re-explains the current work in plain language and holds that register. |
 | `/rearm-watch` **command** | What a human types to join a channel and keep watching it, or to read the roster. |
+| `scripts/canon-gate.js` | The canon gates: `PreToolUse` refusals, `PostToolUse`/`Stop` compulsions, turn-end advisories, plus `stand-down`, `doctor` and `selftest` modes. |
 | `scripts/watch-alarm.js` | The ABSENT alarm and the turn-end gate. Node, no dependencies. |
-| **read-after-write hooks** | Reinforce "verify every write by reading it back" on each portal write. |
 
-### What actually enforces — stated plainly
+### What actually enforces — stated plainly, as of plugin 1.7.8
 
-Two things in that table refuse; the rest advise. It is worth knowing which is which:
+The canon gates ship and are wired into the plugin's hooks. Not every gate has the same evidence behind
+it, and it is worth knowing which is which:
 
 - **The Team Chat turn-end ABSENT gate refuses.** It returns `decision: block`, and it is verified to
   refuse to end a turn while the roster says this session is `ABSENT`.
-- **The read-after-write hook does not refuse.** It injects text only, and has never been able to refuse
-  anything. Treat it as a reminder, not a guarantee.
-- **The canon gates do NOT ship in this release.** The `PreToolUse` denials for fabricated ids and
-  out-of-order writes, the debt gates and the stand-down escape are designed and fixture-tested, but
-  `scripts/canon-gate.js` is on an unmerged branch and **is not in this repo**. Do not plan around them.
-  The status board is
-  [`management-portal/skills/management-portal/canon-gates.md`](management-portal/skills/management-portal/canon-gates.md).
+- **Three canon gates are verified live:** `CANON-ID`, `CANON-READ-BACK` and `CANON-BOTTOM-UP` were
+  observed refusing real calls. The first `CANON-ID` refusals were wrong, and fixed — which is why that is
+  written down rather than left out.
+- **Every other canon gate is ARMED, not ENFORCED** — shipped, wired and fixture-verified, but not yet
+  seen refusing a live call. Each has a documented one-line stand-down escape.
+- The status board is
+  [`management-portal/skills/management-portal/canon-gates.md`](management-portal/skills/management-portal/canon-gates.md);
+  where this page and that board disagree, the board wins.
+
+### What's new in 1.7.8 (since the last published 1.7.5)
+
+- **1.7.8 — project knowledge graphs can be seeded with related earlier graphs and GitHub repos.** Both
+  are new source kinds (`knowledge_graph`, `github_repo`), and the close-out gate now counts sources added
+  in one batched call (`items[].type`), so the documented one-call pattern finally passes.
+- **1.7.7 — reply and forward owe a read-back.** Inbox and chat reply/forward writes carry another
+  person's words across a hop, and the gate now asks for the read that proves they landed.
+- **1.7.6 — the settling call a gate prints now carries the id the read actually takes** — a subtask's
+  parent, not the subtask just created — so running it settles what is owed instead of returning an empty
+  list that looks like data loss.
+
+Details for each are in [`management-portal/README.md`](management-portal/README.md).
 
 ## Use
 

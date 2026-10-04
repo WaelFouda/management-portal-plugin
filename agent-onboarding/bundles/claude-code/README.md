@@ -9,80 +9,54 @@ that is currently the single most common reason a new install cannot connect.
 
 ## Install paths — pick one
 
-The plugin is **v1.3.2**, published from the **public** repo
+The plugin is **v1.7.8**, published from the **public** repo
 [`WaelFouda/management-portal-plugin`](https://github.com/WaelFouda/management-portal-plugin) under the
-marketplace name **`portal`**. Public means clients need no repo access to install it.
+marketplace name **`portal`**. Public means clients need no repo access to install it. The authoritative
+install and sign-in steps live in `agent-onboarding/plugin/README.md`; this page is the short version.
 
-| | Path | How you install | Does it collect your API key? |
+| | Path | How you install | How it authenticates |
 |---|---|---|---|
-| **A** | **Claude Code Desktop — plugin, no terminal** *(recommended)* | Plugins panel → clicks | ✅ **Yes — it prompts you, and stores the key in your OS keychain.** |
-| **B** | **Claude Code CLI — plugin** | `claude plugin …` in a shell | ❌ **No. It never asks. You must set the key yourself — see B2 below.** |
+| **A** | **claude.ai custom connector** — no terminal | Settings → Connectors → clicks | **OAuth** — you approve in a browser. No key. **Tools only.** |
+| **B** | **Claude Code plugin** *(recommended)* | `/plugin` marketplace + install, then sign in from an interactive terminal | **OAuth** — no key to create, paste or store. |
 | **C** | **Manual `.mcp.json`** (this bundle; also Roo Code, Cursor, VS Code Copilot) | copy files, write the header | You write the key into the file. |
 | **D** | **`claude mcp add`** | one command | You pass the key on the command line. |
 
-> ### ⚠️ The difference that breaks installs: **A prompts for your key. B does not.**
+> ### ⚠️ The difference that breaks installs: **Claude Code Desktop cannot finish the OAuth sign-in.**
 >
-> Both A and B install the same plugin. Only **A** ever asks you for a key. A **CLI** install substitutes
-> the key variable **without having collected a value**, so the `X-API-Key` header goes out **empty** and
-> every call fails with a generic connection error that looks like the server is down. It is not — you
-> simply never gave it a key. This is a documented Claude Code limitation, closed as *not planned*:
-> [`anthropics/claude-code#39827`](https://github.com/anthropics/claude-code/issues/39827).
+> The plugin signs in with **OAuth 2.1 + PKCE**. It ships no `userConfig` prompt and its `.mcp.json`
+> carries no `headers` at all — just `type` and `url` — so there is no key for it to ask for, and none to
+> "restore". Desktop performs discovery, client registration and PKCE, builds the authorization URL, then
+> logs `Redirection handling is disabled, skipping redirect` and stops: the "Authenticate" prompt it shows
+> is a status badge, **not a login**, and retrying it will never work. The same applies to `claude -p`
+> and the SDK.
 >
-> **If you install from the CLI, do step B2 below.** It is not optional.
+> **Sign in from an interactive terminal (path B), or use the claude.ai connector (path A).**
 
-## A · Claude Code Desktop — plugin, no terminal (recommended)
+## A · claude.ai custom connector — no terminal
 
-The path for a non-technical user. Nothing to edit, no terminal, and it is the **only** path that puts
-your key in the OS keychain instead of a file on disk.
+**Settings → Connectors → Add custom connector**, paste
+`https://client-management-api-1uk1.onrender.com/mcp`, and approve. No terminal, no JSON, no key. The
+portal tools appear in the conversation straight away.
 
-1. **Create your API key** in the web app → **Settings → API Keys → Generate**, and copy it
-   (it looks like `pfk_live_YOUR_KEY`).
-2. In Claude Code, open **Plugins** → **Add marketplace** → **Add from a repository**, and paste:
+This gives you the **tools only**. The skills, subagents, commands and hooks are plugin content — for
+those, take path B.
 
-   ```
-   WaelFouda/management-portal-plugin
-   ```
+## B · Claude Code plugin (recommended)
 
-3. Find **`management-portal`** in the marketplace list → click **Install**.
-4. **Claude Code prompts you for the API key — paste it.** It is stored in your **OS keychain**: not
-   written into a config file, not committed, not readable from your repo.
-5. **Restart Claude Code** (or `/reload-plugins`). Then `/mcp` shows `management-portal` **connected**,
-   and `/portal` is ready.
+1. **Add the marketplace** — Plugins panel → *Add marketplace*, or run:
+   `/plugin marketplace add WaelFouda/management-portal-plugin`
+2. **Install** — find **`management-portal`** and click *Install*, or run:
+   `/plugin install management-portal@portal`
+3. **Reload** (`/reload-plugins`) or restart Claude Code.
+4. **Sign in.** In an **interactive terminal**, run `claude`, then `/mcp` → select **management-portal** →
+   **Authenticate**. A browser opens, you approve, and the server comes back connected.
 
-## B · Claude Code CLI — plugin
+**Windows:** if no browser opens, Claude Code prints the authorization URL instead — paste it into a
+browser by hand. Then run `/mcp` to confirm `management-portal` is **connected**, and `/plugin` to
+confirm the installed version reads **1.7.8**.
 
-```bash
-claude plugin marketplace add WaelFouda/management-portal-plugin
-claude plugin install management-portal@portal
-```
-
-**B2 — set your key. Do this now, before you try to use it.** The two commands above complete
-successfully and tell you nothing is missing, but **they never asked you for a key**, and the plugin has
-no value to substitute into its `X-API-Key` header. Add the value yourself in `~/.claude/settings.json`,
-under `pluginConfigs`:
-
-```json
-{
-  "pluginConfigs": {
-    "management-portal@portal": {
-      "options": {
-        "mcp_api_key": "pfk_live_YOUR_KEY"
-      }
-    }
-  }
-}
-```
-
-It has to be your **user** settings file — `~/.claude/settings.json`. A project-level or local
-`.claude/settings.json` is **ignored** for `pluginConfigs`, so a key put there looks right and does
-nothing.
-
-Then restart Claude Code and run `/mcp` to confirm `management-portal` is **connected**.
-
-If you skip B2, the failure does not say "no API key". It reports a generic connection/authentication
-error that reads like an outage — which is why this step is here, above the first thing you would try,
-and not in a troubleshooting section at the bottom. Prefer not to have a key in a settings file at all?
-Use **path A**, which is the only one that uses the keychain.
+**Headless / CI, where no browser can ever open,** cannot use OAuth: use path C or D, which take an
+API key.
 
 ## C · Manual `.mcp.json` — this bundle (and Roo Code, Cursor, VS Code Copilot)
 
@@ -123,17 +97,21 @@ claude mcp add --transport http management-portal \
 directory, readable by anything running as you. Treat it as a secret, never copy it into a repo or a
 support ticket, and rotate the key in **Settings → API Keys** if it leaks.
 
-## What one plugin install brings (paths A and B)
+## What one plugin install brings (path B)
 
 A single install registers all of it — there is **nothing to add to `settings.json` by hand**:
 
-- the **`management-portal` MCP server**;
-- the **`management-portal` skill** (the operating discipline, auto-triggering on portal work);
+- the **`management-portal` MCP server** (OAuth, no headers);
+- the **`management-portal` skill** (the operating discipline, auto-triggering on portal work) and its
+  **`canon-gates.md`** status board;
 - the **`team-chat-reachability` skill** and its **`team-chat-watcher` sub-agent**;
 - the **`portal-operator` sub-agent**;
-- the **`/portal`** and **`/rearm-watch`** commands;
-- the **hooks** — read-after-write, the watch recorder, the session-start preflight, and a **`Stop` hook
-  that arms the ABSENT alarm on install** and fires from the plugin's own `hooks/hooks.json`.
+- the **`/portal`**, **`/rearm-watch`**, **`/portal-project`**, **`/portal-continue`**,
+  **`/channel-coordinate`**, **`/channel-join`**, **`/portal-stand-down`**, **`/portal-rearm`** and
+  **`/plain-english`** commands;
+- the **hooks** — the canon gates (`canon-gate.js`: refusals, read-after-write compulsions and turn-end
+  advisories, each with a stand-down escape), the watch recorder, the session-start preflight, and a
+  **`Stop` hook that arms the ABSENT alarm on install** and fires from the plugin's own `hooks/hooks.json`.
 
 ### Upgrading from 1.0.x — two things were renamed
 

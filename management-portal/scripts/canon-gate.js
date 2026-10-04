@@ -225,7 +225,7 @@ const PORTAL_TOOLS = new Set([
   'list_events', 'list_flow_clusters', 'list_flow_connections', 'list_flow_layouts', 'list_gigs',
   'list_journal_attachments', 'list_journal_folders', 'list_journals',
   'list_knowledge_graph_folders', 'list_knowledge_graphs', 'list_mcp_servers',
-  'list_mentoring_sessions', 'list_milestones', 'list_note_columns', 'list_notes',
+  'list_mentoring_sessions', 'list_milestones', 'list_my_github_repos', 'list_note_columns', 'list_notes',
   'list_projects', 'list_quick_proposals', 'list_scheduled_tasks', 'list_scheduling_links',
   'list_scheduling_requests', 'list_skills', 'list_subtasks', 'list_tasks',
   'list_team_chat_members', 'list_time_entries', 'list_workspace_members', 'log_time',
@@ -240,7 +240,9 @@ const PORTAL_TOOLS = new Set([
   'reorder_proposal_milestones', 'reorder_proposal_phases', 'require_channel_watch',
   'resolve_comment', 'run_in_sandbox', 'search_journals', 'search_knowledge_graphs',
   'semantic_search_knowledge_graph', 'send_chat_message', 'send_dm_message',
-  'send_inbox_message', 'set_agents_paused', 'set_block_parent', 'set_channel_policy',
+  'send_inbox_message', 'reply_to_inbox_message', 'forward_inbox_message',
+  'forward_chat_message', 'mark_dm_read', 'transcribe_voice_message',
+  'set_agents_paused', 'set_block_parent', 'set_channel_policy',
   'set_journal_reflection', 'set_scheduled_task_enabled', 'spawn_subagents',
   'stage_configure_sandbox_env', 'stage_create_skill', 'stage_install_mcp_server',
   'stage_install_skill', 'stage_set_mcp_server_enabled', 'stage_set_skill_enabled',
@@ -343,6 +345,18 @@ const WRITE_READ_MAP = {
   send_chat_message: ['read_channel_messages'],
   send_dm_message: ['read_dm_messages'],
   send_inbox_message: ['read_inbox'],
+  // Reply and forward WRITE a message like any send, so they owe the same
+  // read-back. They were advertised and registered for a whole release
+  // without appearing here, which meant the one class of write most likely
+  // to lose something in transit — a quote carrying somebody else's words
+  // and their attachment — was the only class with NO obligation to prove it
+  // landed. Found by an acceptance pass, not by the gate.
+  reply_to_inbox_message: ['read_inbox'],
+  forward_inbox_message: ['read_inbox'],
+  forward_chat_message: ['read_channel_messages', 'read_dm_messages'],
+  // mark_dm_read's whole point is the unread count moving; the conversation
+  // list is where that is visible, so it is the read that proves the write.
+  mark_dm_read: ['read_dm_conversations'],
   start_watching_channel: ['list_channel_watchers'],
   require_channel_watch: ['list_channel_watchers'],
   release_channel_watch: ['list_channel_watchers'],
@@ -376,6 +390,52 @@ const WRITE_READ_MAP = {
   create_knowledge_graph_edge: ['get_knowledge_graph'],
   set_channel_policy: ['read_channel_policy'],
   create_chat_channel: ['read_chat_channels'],
+};
+
+/**
+ * WHEN THE MAPPED READ TAKES A DIFFERENT ID THAN THE WRITE RETURNS.
+ *
+ * MEASURED 2026-08-19. A planning turn created a proposal and seven subtasks. At
+ * turn end the gate named the settling call itself:
+ *
+ *   bulk([get_proposal_detail("<proposal id>"), list_subtasks("<new subtask id>"), ...])
+ *
+ * All eight ran, returned successfully, and settled NOTHING — and could not have:
+ *   · `list_subtasks` takes the PARENT. Handed the id of the subtask just created,
+ *     it answers "No subtasks found" because a fresh leaf has no children BY
+ *     CONSTRUCTION — empty for the one reason unrelated to whether it persisted.
+ *   · `get_proposal_detail` takes a PROJECT id and was handed the PROPOSAL id, so
+ *     it answered "No proposal found" about a proposal that exists.
+ *
+ * The operator is left looking at eight empty reads that read as data loss. Every
+ * write was present: `get_task` returned the subtasks by id, and `list_subtasks`
+ * on the REAL parents returned all seven.
+ *
+ * Same defect as the update_brief/get_brief case in clearReads, and as
+ * `get_knowledge_graph("<node id>")` before it: a gate prescribing a call that
+ * cannot clear it. Third instance is where it stops being a coincidence, so the
+ * rule goes in as DATA rather than being hand-fixed once more.
+ *
+ * Keying the obligation on the OWNER id — the id named by BOTH the write's
+ * arguments and the read's — is exactly how update_brief is already keyed
+ * (args.project_id). Two consequences, both wanted: settleCall prints a call that
+ * can run, and clearReads settles it, because the owner is in the read's own
+ * arguments (argIds) and the created child comes back in the listing body.
+ *
+ * Cost, stated rather than hidden: two subtasks under one parent now share one
+ * obligation, so a single list_subtasks(parent) discharges both. That is the right
+ * strength — that listing IS the proof that both children exist.
+ *
+ * Every key here must name an argument the WRITE actually carries; when it does
+ * not, `owner` is null and the old behaviour stands unchanged.
+ */
+const READ_ARG_SOURCE = {
+  create_subtask: 'parent_task_id',
+  create_proposal: 'project_id',
+  add_proposal_phase: 'project_id',
+  add_proposal_milestone: 'project_id',
+  create_board_block: 'board_id',
+  add_journal_attachment: 'log_id',
 };
 
 /**
@@ -642,7 +702,12 @@ function fold(rows, run) {
       }
     }
     // For a delete the RESPONSE id is the thing that must vanish, and so is the argument.
-    const id = (ids && ids[0]) || (args && (args.board_id || args.task_id || args.project_id
+    // The OWNER id wins when the mapped read is called with one — see READ_ARG_SOURCE.
+    // Without it the obligation keys on the id the write RETURNED, and the call the
+    // gate then prints cannot clear it however many times it is run.
+    const ownerKey = READ_ARG_SOURCE[tool];
+    const owner = (ownerKey && args && typeof args[ownerKey] === 'string') ? args[ownerKey] : null;
+    const id = owner || (ids && ids[0]) || (args && (args.board_id || args.task_id || args.project_id
       || args.client_id || args.graph_id || args.note_id)) || null;
     const key = tool + '|' + (id || tu || String(t));
     // A write made in THIS session keeps whatever `carried` it already had: a `debt` row
@@ -796,7 +861,7 @@ function fold(rows, run) {
       if (tool === 'read_board' || tool === 'list_board_blocks') st.board.read++;
       if (/knowledge_graph/.test(tool)) ids.forEach((i) => st.graphIds.add(i));
       if (tool === 'create_knowledge_graph') st.kgClose.create++;
-      if (tool === 'add_source_to_knowledge_graph' && a.source_type) st.kgClose.sources.add(a.source_type);
+      countSourceKinds(st, tool, a);
       if (tool === 'extract_knowledge_graph') st.kgClose.extract++;
       if (tool === 'interpret_knowledge_graph') st.kgClose.interpret++;
       if (tool === 'get_knowledge_graph' || tool === 'semantic_search_knowledge_graph') st.kgClose.read++;
@@ -861,6 +926,21 @@ function settleCall(open) {
   return reads.length > 1 ? 'bulk([' + reads.join(', ') + '])' : reads[0];
 }
 
+/**
+ * Credit the close-out with every source KIND a call attaches. The canon documents ONE call,
+ * `add_source_to_knowledge_graph(graph_id, items:[…])`, and counting only a top-level
+ * `source_type` scored that call ZERO kinds — so the documented close-out could never pass.
+ * `items[].type` and `create_knowledge_graph`'s `sources[].type` count too; `a.item_types` is
+ * the ledger's compact form (safeArgs), and raw bulk arguments are reduced the same way.
+ * Related graphs (`knowledge_graph`) and repos (`github_repo`) count like any other kind.
+ */
+function countSourceKinds(st, tool, a) {
+  if (tool !== 'add_source_to_knowledge_graph' && tool !== 'create_knowledge_graph') return;
+  if (tool === 'add_source_to_knowledge_graph' && a.source_type) st.kgClose.sources.add(a.source_type);
+  const kinds = Array.isArray(a.item_types) ? a.item_types : L.sourceKinds(a);
+  for (const k of kinds) if (typeof k === 'string' && k) st.kgClose.sources.add(k);
+}
+
 /** Obligations that outlived the turn they were made in. */
 function carriedDebt(st) {
   return [...st.obligations.values()].filter((o) => o.carried && (WRITE_READ_MAP[o.w] || [])[0]);
@@ -879,7 +959,7 @@ function closeoutMissing(st) {
   const miss = [];
   if (!st.summaryBoardAfterAll) miss.push({ id: 'board', text: 'the (b) summary board — create_board + at least one create_board_block' });
   if (!st.kgClose.create) miss.push({ id: 'kg-create', text: 'create_knowledge_graph' });
-  if (st.kgClose.sources.size < 3) miss.push({ id: 'kg-sources', text: 'add_source_to_knowledge_graph covering journal folder, note, board, project, task and a tag (seen: ' + (st.kgClose.sources.size || 'none') + ')' });
+  if (st.kgClose.sources.size < 3) miss.push({ id: 'kg-sources', text: 'add_source_to_knowledge_graph covering journal folder, note, board, project, task and a tag — plus related graphs and repos where they exist (kinds seen: ' + (st.kgClose.sources.size || 'none') + ')' });
   if (!st.kgClose.extract) miss.push({ id: 'kg-extract', text: 'extract_knowledge_graph' });
   if (!st.kgClose.interpret) miss.push({ id: 'kg-interpret', text: 'interpret_knowledge_graph' });
   if (!st.kgClose.read) miss.push({ id: 'kg-read', text: 'a get_knowledge_graph / semantic_search_knowledge_graph read-back' });
@@ -1570,7 +1650,7 @@ function simulateInner(st, tool, args) {
   // The close-out counters, so a close-out BATCHED into one bulk — which is exactly what
   // CANON-DEBT-CLOSEOUT's block text asks for — is not refused at its own last item.
   if (tool === 'create_knowledge_graph') st.kgClose.create++;
-  if (tool === 'add_source_to_knowledge_graph' && a.source_type) st.kgClose.sources.add(a.source_type);
+  countSourceKinds(st, tool, a);
   if (tool === 'extract_knowledge_graph') st.kgClose.extract++;
   if (tool === 'interpret_knowledge_graph') st.kgClose.interpret++;
   if (tool === 'get_knowledge_graph' || tool === 'semantic_search_knowledge_graph') st.kgClose.read++;

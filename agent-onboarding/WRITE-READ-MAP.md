@@ -34,7 +34,7 @@
 | `create_gig`, `update_gig`, `add/update/delete_gig_*` | `get_gig` / `list_gigs` | gig + packages/faq/requirements |
 | `update_my_profile_extended`, `update_profile`, portfolio/work-history/skills writes | `get_my_full_profile` / `get_my_portfolio` / `get_my_work_history` / `get_my_skills` | profile fields |
 | `create_scheduling_link`, `approve/reject_scheduling_request` | `list_scheduling_links` / `list_scheduling_requests` | scheduling state |
-| `send_chat_message`, `send_dm_message`, `send_inbox_message` | `read_channel_messages` / `read_dm_messages` / `read_inbox` | message posted |
+| `send_chat_message`, `send_dm_message`, `send_inbox_message`, `reply_to_inbox_message`, `forward_inbox_message`, `forward_chat_message` | `read_channel_messages` / `read_dm_messages` / `read_inbox` | message posted. A FORWARD is labelled with who originally wrote it, so a quote cannot arrive as your own words; an inbox REPLY goes to the original sender only, never reply-all. |
 | `remember`, `update_memory`, `delete_memory` | `recall` | memory state |
 
 **Rule:** after a write, call the mapped read tool and confirm the *specific field you wrote* is

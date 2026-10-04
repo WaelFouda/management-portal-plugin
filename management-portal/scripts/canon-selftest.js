@@ -646,7 +646,7 @@ function caseLifecycle() {
   const d = cli(['doctor']);
   check('doctor reports the home and the run', /CANON_HOME/.test(d.stdout || '') && /state RUN/.test(d.stdout || ''), d.stdout);
   check('doctor lists armed gates', /ARMED\s+CANON-ID/.test(d.stdout || ''));
-  check('doctor reports the tool count', /portal tools\s+:\s+257 known/.test(d.stdout || ''), (d.stdout || '').split('\n').find((x) => /portal tools/.test(x)));
+  check('doctor reports the tool count', /portal tools\s+:\s+263 known/.test(d.stdout || ''), (d.stdout || '').split('\n').find((x) => /portal tools/.test(x)));
   const c = cli(['run-close']);
   check('run-close closes the run', /closed/.test(c.stdout || ''), c.stdout);
   const d2 = cli(['doctor']);
@@ -671,7 +671,7 @@ function caseTools() {
   fresh();
   const t = cli(['tools']);
   const names = (t.stdout || '').trim().split('\n');
-  check('tools lists 257 portal tools', names.length === 257, 'got ' + names.length);
+  check('tools lists 263 portal tools', names.length === 263, 'got ' + names.length);
   check('bulk is in the list', names.includes('bulk'));
   check('create_project is in the list', names.includes('create_project'));
   check('a foreign tool is not', !names.includes('write_file'));
@@ -1226,6 +1226,103 @@ function caseDebtCloseout() {
   check('the close-out CLEARS the debt', !/CANON-DEBT-CLOSEOUT/.test(cleared || ''), cleared || '');
 }
 
+function caseGapSourceKindsFromItems() {
+  console.log('\nGAP the documented close-out — ONE add_source call with items:[…] — counts its kinds');
+  // The canon documents `add_source_to_knowledge_graph(graph_id, items:[…])` as ONE call, but
+  // the gate counted kinds only from a top-level `source_type`, and safeArgs drops `items`. So
+  // the documented close-out scored ZERO kinds against a rule wanting three, and could never pass.
+  const L = require('./canon-lib.js');
+  const safe = L.safeArgs({ graph_id: UUID_A, items: [
+    { type: 'journal_folder', id: UUID_B, title: 'SECRET-SOURCE-TITLE' },
+    { type: 'note', id: UUID_C }, { type: 'note', id: UUID_A }, { type: 'DROP TABLE x' },
+    { type: 'journal_query', config: { tags: ['SECRET-TAG'] } },
+    JSON.stringify({ type: 'github_repo', id: 'acme/widgets' }),
+  ] });
+  check('safeArgs reduces items to their deduped type strings',
+    JSON.stringify(safe.item_types) === JSON.stringify(['journal_folder', 'note', 'journal_query', 'github_repo']),
+    JSON.stringify(safe));
+  check('  …and keeps no item id, title or config',
+    !('items' in safe) && !/SECRET|acme|bbbbbbbb|cccccccc/.test(JSON.stringify(safe)), JSON.stringify(safe));
+  const many = L.safeArgs({ items: Array.from({ length: 50 }, (_, i) => ({ type: 'k' + i })) });
+  check('  …capped at 20 kinds', many.item_types.length === 20, String(many.item_types.length));
+  check('create_knowledge_graph sources[] reduce the same way',
+    JSON.stringify(L.safeArgs({ sources: [{ type: 'knowledge_graph', id: UUID_B }] }).item_types) === '["knowledge_graph"]');
+
+  // A carried close-out debt, exactly as D3 builds it.
+  const carried = () => {
+    const sid = fresh();
+    cli(RUN_ARGS);
+    patchRun({ all_phases_terminal: true });
+    seedSeen(sid, UUID_A);
+    gate('prompt', { session_id: sid, cwd: PROJ, hook_event_name: 'UserPromptSubmit', prompt: 'go' });
+    gate('stop', stop(sid, false));
+    gate('stop', stop(sid, true));
+    gate('prompt', { session_id: sid, cwd: PROJ, hook_event_name: 'UserPromptSubmit', prompt: 'next' });
+    return sid;
+  };
+  const rest = (sid, sourceCall) => {
+    gate('post', post(sid, MCP + 'create_board', {}, 'Board [id: ' + UUID_A + ']'));
+    gate('post', post(sid, MCP + 'create_knowledge_graph', sourceCall.create || {}, 'Graph [id: ' + UUID_C + ']'));
+    if (sourceCall.add) gate('post', post(sid, MCP + 'add_source_to_knowledge_graph', sourceCall.add, 'added'));
+    gate('post', post(sid, MCP + 'extract_knowledge_graph', { graph_id: UUID_C }, 'extracted'));
+    gate('post', post(sid, MCP + 'interpret_knowledge_graph', { graph_id: UUID_C }, 'interpreted'));
+    gate('post', post(sid, MCP + 'get_knowledge_graph', { graph_id: UUID_C }, 'graph [id: ' + UUID_C + ']'));
+    gate('post', post(sid, MCP + 'create_journal', { folder_id: UUID_A }, 'Journal [id: ' + UUID_B + ']'));
+    gate('post', post(sid, MCP + 'list_journals', {}, 'entries'));
+    return denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A })));
+  };
+  const items = (...kinds) => kinds.map((k) => ({ type: k, id: UUID_A }));
+
+  const one = rest(carried(), { add: { graph_id: UUID_C, items: items('journal_folder', 'note', 'board') } });
+  check('ONE add_source call with items:[journal_folder, note, board] satisfies the >=3 kinds rule',
+    !/CANON-DEBT-CLOSEOUT/.test(one || ''), one || '');
+
+  const two = rest(carried(), { add: { graph_id: UUID_C, items: items('journal_folder', 'note') } });
+  check('(control) two kinds in items is still short — and the reason says which rule',
+    /CANON-DEBT-CLOSEOUT/.test(two || '') && /add_source_to_knowledge_graph/.test(two || ''), two || '(ALLOWED)');
+
+  const newKinds = rest(carried(), { add: { graph_id: UUID_C, items: [
+    { type: 'knowledge_graph', id: UUID_B }, { type: 'github_repo', id: 'acme/widgets' }, { type: 'note', id: UUID_A }] } });
+  check('knowledge_graph and github_repo items count as kinds like any other',
+    !/CANON-DEBT-CLOSEOUT/.test(newKinds || ''), newKinds || '');
+
+  const viaCreate = rest(carried(), { create: { title: 'g', sources: items('journal_folder', 'knowledge_graph', 'github_repo') } });
+  check('create_knowledge_graph(sources:[…]) kinds count too',
+    !/CANON-DEBT-CLOSEOUT/.test(viaCreate || ''), viaCreate || '');
+
+  // THE BULK REPLAY. The close-out batched into one bulk — which the debt card asks for — with
+  // the kinds only inside items, must not be refused at its own last item.
+  const closeoutBulk = (kinds) => ({ calls: [
+    { tool: 'create_board', arguments: {} },
+    { tool: 'create_knowledge_graph', arguments: {} },
+    { tool: 'add_source_to_knowledge_graph', arguments: { graph_id: UUID_A, items: items(...kinds) } },
+    { tool: 'extract_knowledge_graph', arguments: { graph_id: UUID_A } },
+    { tool: 'interpret_knowledge_graph', arguments: { graph_id: UUID_A } },
+    { tool: 'get_knowledge_graph', arguments: { graph_id: UUID_A } },
+    { tool: 'create_journal', arguments: { folder_id: UUID_A } },
+    { tool: 'list_journals', arguments: {} },
+    { tool: 'update_task', arguments: { task_id: UUID_A } },
+  ] });
+  const bOk = denialOf(gate('pre', pre(carried(), MCP + 'bulk', closeoutBulk(['journal_folder', 'note', 'board']))));
+  check('the same items inside a bulk replay satisfy the rule before the batch runs',
+    !/CANON-DEBT-CLOSEOUT/.test(bOk || ''), bOk || '');
+  const bShort = denialOf(gate('pre', pre(carried(), MCP + 'bulk', closeoutBulk(['journal_folder', 'note']))));
+  check('(control) a bulk with two kinds is refused at the work item',
+    /CANON-DEBT-CLOSEOUT/.test(bShort || '') && /\[8\]/.test(bShort || ''), bShort || '(ALLOWED)');
+  const bNew = denialOf(gate('pre', pre(carried(), MCP + 'bulk', closeoutBulk(['knowledge_graph', 'github_repo', 'project']))));
+  check('knowledge_graph / github_repo kinds count inside a bulk replay too',
+    !/CANON-DEBT-CLOSEOUT/.test(bNew || ''), bNew || '');
+
+  // …and the RECORDED bulk (PostToolUse → ledger → fold) keeps the kinds through safeArgs.
+  const sid = carried();
+  const calls = closeoutBulk(['journal_folder', 'note', 'board']).calls.slice(0, 8);
+  gate('post', post(sid, MCP + 'bulk', { calls }, 'Ran 8/8 call(s); 0 failed.\n'
+    + calls.map((c, i) => '[' + i + '] ' + c.tool + ': ok [id: ' + UUID_A + ']').join('\n')));
+  const folded = denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A })));
+  check('a recorded bulk close-out with items clears the debt on the next call',
+    !/CANON-DEBT-CLOSEOUT/.test(folded || ''), folded || '');
+}
+
 function caseDebtDegrades() {
   console.log('\nD4 the debt gate degrades rather than wedging the session');
   const sid = fresh();
@@ -1729,6 +1826,69 @@ function caseGapReArmIsReachable() {
     !/not a mode|unknown/i.test(cli(['rearm', '--gate', 'all']).stdout || ''));
 }
 
+function caseGapSettleCallTakesTheOwnerId() {
+  console.log('\nGAP a read that takes an OWNER id must be PRINTED with the owner id');
+  // MEASURED 2026-08-19, and the third instance of one defect - which is why the rule is
+  // now DATA (READ_ARG_SOURCE) rather than a third hand-fix.
+  //
+  // A planning turn created a proposal and seven subtasks. At turn end the gate named its
+  // own settling call:
+  //   bulk([get_proposal_detail("<proposal id>"), list_subtasks("<new subtask id>"), ...])
+  // All eight ran, returned successfully, and settled NOTHING:
+  //   - list_subtasks takes the PARENT. Handed the id of the subtask just created it
+  //     answers "No subtasks found" - empty BY CONSTRUCTION, for the one reason that has
+  //     nothing to do with whether the write persisted.
+  //   - get_proposal_detail takes a PROJECT id and was handed the PROPOSAL id.
+  // Eight empty reads that read exactly like data loss. Every write had persisted.
+  const sid = fresh();
+  const b = blockOf(gate('post', post(sid, MCP + 'create_subtask',
+    { parent_task_id: UUID_A, title: 'M2.1' }, 'Subtask created [id: ' + UUID_B + ']')));
+  check('the settling call names the PARENT id',
+    /list_subtasks\("?aaaaaaaa/.test(b || ''), (b || '').slice(0, 160));
+  check('  ...and never the just-created child, which has no children by construction',
+    !/list_subtasks\("?bbbbbbbb/.test(b || ''), (b || '').slice(0, 160));
+
+  // The call it prints must actually DISCHARGE it. A runnable call that still settles
+  // nothing would be the same defect in better clothes.
+  const sid2 = fresh();
+  gate('post', post(sid2, MCP + 'create_subtask',
+    { parent_task_id: UUID_A, title: 'M2.1' }, 'Subtask created [id: ' + UUID_B + ']'));
+  gate('post', post(sid2, MCP + 'list_subtasks', { parent_task_id: UUID_A },
+    'Found 1 subtask(s): - [pending] M2.1 [id: ' + UUID_B + ']'));
+  const after = blockOf(gate('stop', stop(sid2, false)));
+  check('listing the parent discharges the subtask obligation',
+    !/create_subtask/.test(after || ''), (after || '').slice(0, 200));
+
+  // Control on the STOP gate, not a second PostToolUse block: the gate does not repeat a
+  // block it has already spent, so 'did it fire again' answers a different question than
+  // 'is this still outstanding'. That mistake has been made twice in this file already.
+  const sid3 = fresh();
+  gate('post', post(sid3, MCP + 'create_subtask',
+    { parent_task_id: UUID_A, title: 'M2.1' }, 'Subtask created [id: ' + UUID_B + ']'));
+  const owed = blockOf(gate('stop', stop(sid3, false)));
+  check('(control) with no listing at all it stays outstanding',
+    /create_subtask/.test(owed || ''), (owed || '(no block)').slice(0, 160));
+
+  // A listing of some OTHER parent must not launder it. This is the assertion that decides
+  // whether keying on the owner is a fix or a hole.
+  const sid4 = fresh();
+  gate('post', post(sid4, MCP + 'create_subtask',
+    { parent_task_id: UUID_A, title: 'M2.1' }, 'Subtask created [id: ' + UUID_B + ']'));
+  gate('post', post(sid4, MCP + 'list_subtasks', { parent_task_id: UUID_C },
+    'No subtasks found for task ' + UUID_C + '.'));
+  const other = blockOf(gate('stop', stop(sid4, false)));
+  check('a listing of a DIFFERENT parent settles nothing',
+    /create_subtask/.test(other || ''), (other || '(no block)').slice(0, 160));
+
+  // The proposal half of the same defect.
+  const sid5 = fresh();
+  const bp = blockOf(gate('post', post(sid5, MCP + 'create_proposal',
+    { project_id: UUID_A, title: 'P' }, 'Proposal created [id: ' + UUID_B + ']')));
+  check('get_proposal_detail is printed with the PROJECT id',
+    /get_proposal_detail\("?aaaaaaaa/.test(bp || ''), (bp || '').slice(0, 160));
+  check('  ...and not with the proposal id it just returned',
+    !/get_proposal_detail\("?bbbbbbbb/.test(bp || ''), (bp || '').slice(0, 160));
+}
 function caseGapSettleCallTakesThatId() {
   console.log('\nGAP the call a gate NAMES must accept the id it prints');
   // MEASURED 2026-08-17, two defects surfaced by one probe node.
@@ -2114,9 +2274,9 @@ function run() {
     caseP8, caseO1, caseS1, caseNoRepeat, caseBudget, caseEscapes, caseFailSafe, casePrivacy,
     caseLifecycle, caseTools,
     caseGapShellSurface, caseGapTreeFirstEffect, caseGapBulk, caseGapBulkResponseShape,
-    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapBoardAndStatusEnforced, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapBriefReadBackIsDischargeable, caseGapBoundaryInsideABulk, caseGapSettleCallTakesThatId, caseGapReArmIsReachable, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
+    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapBoardAndStatusEnforced, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapBriefReadBackIsDischargeable, caseGapBoundaryInsideABulk, caseGapSettleCallTakesThatId, caseGapSettleCallTakesTheOwnerId, caseGapReArmIsReachable, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
     caseGapIdProvenance, caseGapScope,
-    caseDebtReadBack, caseDebtSeams, caseDebtThisTurn, caseDebtCloseout, caseDebtDegrades, caseDebtColdReturn,
+    caseDebtReadBack, caseDebtSeams, caseDebtThisTurn, caseDebtCloseout, caseGapSourceKindsFromItems, caseDebtDegrades, caseDebtColdReturn,
     caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath];
   for (const c of cases) {
     try { c(); } catch (e) { fail++; failures.push(c.name + ' threw: ' + e.message); console.log('  FAIL  ' + c.name + ' threw: ' + e.message); }

@@ -57,12 +57,14 @@ mid-run turn gives an account of itself. Others (bulk efficiency, status discipl
 
 **Do not assume either way — check the status board in `canon-gates.md` (same folder) before you rely
 on a gate or excuse yourself from a rule.** Every gate there carries one of four states, and **no state
-is ever rounded up to the one above it**. As of plugin 1.5.0 the engine **ships**: `canon-gate.js`
-carries a real `permissionDecision` and is wired into the hooks, so the gates read **ARMED — shipped,
-wired and fixture-verified**. **ARMED is not ENFORCED:** no live refusal has been observed against this
-merged build, so treat them as gates that exist and are expected to fire, not as gates anyone has
-watched fire here. The one piece of enforcement observed live remains the Team Chat turn-end ABSENT
-gate. This matters concretely: 1.4.3's read-after-write "gate" was 61 lines with no
+is ever rounded up to the one above it**. The engine has shipped since plugin 1.5.0: `canon-gate.js`
+carries a real `permissionDecision` and is wired into the hooks. As of 1.7.8, three gates —
+`CANON-ID`, `CANON-READ-BACK`, `CANON-BOTTOM-UP` — read **ENFORCED** (observed refusing real calls live;
+the first `CANON-ID` refusals were false, and fixed), and the rest read **ARMED — shipped, wired and
+fixture-verified**. **ARMED is not ENFORCED:** no live refusal has been observed for those, so treat
+them as gates that exist and are expected to fire, not as gates anyone has watched fire here. The Team
+Chat turn-end ABSENT gate is the other piece of enforcement observed live. This matters concretely:
+1.4.3's read-after-write "gate" was 61 lines with no
 `permissionDecision` in it at all and was advisory from the day it shipped while being called a gate —
 which is why "it ships" and "it is verified" are kept as separate sentences here.
 
@@ -183,11 +185,12 @@ were told and nothing stopped you.
 
 **Read `canon-gates.md` (same folder) for the status board, and treat it as the only truthful answer
 to "is this enforced?"** It marks every rule **ENFORCED**, **ARMED**, **ADVISORY**, or **PENDING**,
-and nothing is rounded up. As of plugin 1.5.0 the engine has merged and **every canon gate reads
-ARMED**: the code ships, it is wired into the hooks, and `canon-selftest.js` drives each gate into
-its latched state and back out with fixture payloads. **What has not happened is a live refusal
-observed against this merged build** — so "armed" is the claim, not "proven here". The one thing in
-this plugin observed live to refuse anything is the Team Chat turn-end ABSENT gate.
+and nothing is rounded up. The engine has shipped since plugin 1.5.0: the code is wired into the
+hooks, and `canon-selftest.js` drives each gate into its latched state and back out with fixture
+payloads. As of 1.7.8, **three gates read ENFORCED** — `CANON-ID`, `CANON-READ-BACK` and
+`CANON-BOTTOM-UP` were observed refusing real calls live — and **every other canon gate reads ARMED**:
+for those, no live refusal has been observed, so "armed" is the claim, not "proven here". The Team Chat
+turn-end ABSENT gate is the other thing in this plugin observed live to refuse.
 
 Three things to know now, so you are not surprised mid-run:
 

@@ -102,7 +102,8 @@ create_board(title:"<project> — summary")
 
 Then close the run out: a **final journal entry** in the run-log folder with the lessons learnt and
 anything that must be returned to, read back; and the **knowledge-graph closure** — sources covering the
-journal folder, the notes, the boards, the tag query, the project and the tasks →
+journal folder, the notes, the boards, the tag query, the project and the tasks (plus related earlier
+graphs and the project's GitHub repos, where they exist) →
 `extract_knowledge_graph` → `interpret_knowledge_graph` → a read-back. `CANON-CLOSEOUT` names exactly
 which of these is missing, and the run auto-closes when they are all present.
 

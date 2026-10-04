@@ -32,7 +32,7 @@ key to create, paste or store. The plugin ships no `userConfig` prompt, and its 
 
 ---
 
-# The canon gates (1.7.0) — READ THE ESCAPE FIRST
+# The canon gates (1.7.8) — READ THE ESCAPE FIRST
 
 1.5.0 turns parts of the agent discipline from **reminders** into **hooks that refuse**. Before anything
 else, here is how to turn them off, because someone reading this section is usually reading it because
@@ -110,9 +110,9 @@ graph closure and final journal (`CANON-CLOSEOUT`).
 deny on the fourth single write cannot undo the first three), status discipline (`CANON-STATUS`), and
 completeness (`CANON-COMPLETE` — which names empty **fields** and never judges what is written in them).
 
-> ### ⚠️ Status, as of plugin 1.7.0 — three gates verified live, the rest armed
+> ### ⚠️ Status, as of plugin 1.7.8 — three gates verified live, the rest armed
 >
-> **The engine ships.** `scripts/canon-gate.js` is present, 2062 lines, emits a real `PreToolUse`
+> **The engine ships.** `scripts/canon-gate.js` is present, 2448 lines, emits a real `PreToolUse`
 > `permissionDecision: "deny"`, and `hooks/hooks.json` wires it into 8 of the 11 hook entries. The
 > advisory `portal-gate.js` it replaces has been **deleted**. Every canon gate above therefore reads
 > **ARMED** — shipped, wired, and **fixture-verified** by `scripts/canon-selftest.js`, which spawns the
@@ -127,7 +127,7 @@ completeness (`CANON-COMPLETE` — which names empty **fields** and never judges
 > parent's own uuid.
 >
 > **ARMED still is not ENFORCED for the rest**, and must not be written up as one. Everything not named
-> above is fixture-verified by `scripts/canon-selftest.js` (398 assertions) and has not been seen refusing
+> above is fixture-verified by `scripts/canon-selftest.js` (425 assertions) and has not been seen refusing
 > a live call. The status board in `skills/management-portal/canon-gates.md` remains the one place that
 > verdict lives; this box mirrors it and the two are required to agree.
 >
@@ -166,6 +166,39 @@ node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" selftest   # fixture payloads 
 ```
 
 ## Known failure modes — named, not hidden
+
+- **The documented knowledge-graph close-out could never pass — fixed in 1.7.8.** The canon says to attach
+  sources in ONE call, `add_source_to_knowledge_graph(graph_id, items:[…])`, but `CANON-CLOSEOUT` counted
+  source kinds only from a top-level `source_type`, and the ledger's allow-list drops `items`. So the
+  documented call scored **zero** kinds against a rule wanting three. The ledger now keeps a compact
+  `item_types` (the type strings only — deduped, capped at 20, never an id, title or config) and the gate
+  counts them, from `items[]` and from `create_knowledge_graph`'s `sources[]`, single-call, recorded bulk
+  and in-bulk replay alike. 1.7.8 also documents the two new source kinds — related earlier graphs
+  (`knowledge_graph`) and GitHub repos (`github_repo`, found with `list_my_github_repos`) — which count
+  like any other kind.
+
+- **Reply and forward owed a read-back and were never asked for one — fixed in 1.7.7.** Five tools —
+  `reply_to_inbox_message`, `forward_inbox_message`, `forward_chat_message`, `mark_dm_read`,
+  `transcribe_voice_message` — shipped without appearing in the gate's tool inventory or its write→read
+  map, and an unmapped write carries **no obligation at all**. Reply and forward are the worst possible
+  omission: they carry another person's words and attachment across a hop, and quoting had already been
+  caught dropping attachments while keeping their labels — a lossy quote that looked complete. They now
+  owe the read that can actually settle them: `read_inbox` for an inbox reply or forward,
+  `read_channel_messages` or `read_dm_messages` for a forwarded chat message, and
+  `read_dm_conversations` for `mark_dm_read`, because the unread count moving **is** the effect.
+  `transcribe_voice_message` is inventoried but deliberately unmapped — it is read-shaped. Found by an
+  independent acceptance pass, not by the gate.
+
+- **The settling call a gate printed could not settle anything — fixed in 1.7.6.** At turn end the gate
+  names the one `bulk` that clears what is owed, and it built that call from the id the WRITE returned
+  instead of the id the READ takes. So it printed `list_subtasks("<the subtask just created>")` — which
+  answers "No subtasks found", because a fresh leaf has no children by construction — and
+  `get_proposal_detail("<proposal id>")`, a read that takes a project id. Eight reads ran cleanly,
+  settled nothing, and looked exactly like data loss; nothing was lost. It was the third instance of one
+  defect, so the rule is now **data**, not a fourth hand-fix: `READ_ARG_SOURCE` names, per write, the
+  argument its read is called with, and the obligation keys on that owner id. The cost, stated: two
+  subtasks under one parent share one obligation, so one `list_subtasks(parent)` settles both — that
+  listing is the proof both exist.
 
 - **A restart, or a sub-agent, lost the decomposition — fixed in 1.6.3.** `CANON-TREE-FIRST` counted the
   four decomposition calls in the SESSION's tool stream, but a run outlives a session. Restart Claude
@@ -259,7 +292,6 @@ stores that an entry happened and never a word of what it said.**
 | `/channel-coordinate`, `/channel-join` | Join a Team Chat channel as coordinator or participant, under a name you choose. |
 | `/portal-stand-down` **command** | **The escape.** Stands one gate — or all of them — down, mid-session. |
 | `/portal-rearm` **command** | **The way back.** Re-arms them and names anything left off. The sentinels survive restarts, so a stand-down that was right on a broken build stays in force until this is typed. |
-| `/portal-rearm` **command** | **The way back.** Re-arms them, and names anything left off. Sentinels survive restarts. |
 | `/plain-english` **command** | Re-explains the current work in plain language — short, jargon-free, decision-first — and holds that register for the rest of the session. For handing a status to someone who does not work on the code. It changes how things are said, never what is true. |
 | **canon gate hooks** | `PreToolUse` and `PostToolUse` on matcher `.*`, plus `SessionStart`, `UserPromptSubmit`, `SubagentStart`/`SubagentStop`, `Stop` and `SessionEnd` — all routed through `canon-gate.js`, which carries a real `permissionDecision`. **The 1.4.3 `portal-gate.js`, which carried none and could only remind, is deleted.** |
 | `team-chat-reachability` **skill** | Teaches how to stay reachable on a channel watch roster; the re-arm rule. |
@@ -343,7 +375,7 @@ name yet — not the sign-in.
 ## The tool-name prefix depends on which install path you took
 
 **Read this before you write a hook matcher, an agent `tools:` list, or any doc that spells a tool name
-out in full.** A **plugin** install (Routes B and C) and a **manual** registration (`claude mcp add`, the
+out in full.** A **plugin** install (Route 2) and a **manual** registration (`claude mcp add`, the
 file-copy bundle) do **not** produce the same tool names.
 
 | Install path | Server registers as | Tools appear as |
@@ -361,7 +393,7 @@ are both `management-portal`, the segment is doubled — which looks like a typo
 because `matcher` is a **full** match that pattern was silently **inert** for a claude.ai-connector
 install (`mcp__claude_ai_management-portal__*`) and for a UUID-named install (`mcp__<uuid>__*`), both
 of which are live in the wild. 1.5.0 matches **`.*`** and scopes **at runtime** against a frozen set
-of 257 portal tool names — a tool outside that set is never subject to a portal invariant, so an
+of 257 portal tool names (263 as of 1.7.8) — a tool outside that set is never subject to a portal invariant, so an
 unknown MCP server is ignored rather than gated. **Never enumerate install spellings in a regex
 again**; that is how this broke in the first place. (`watch-alarm.js`'s recorder is the one remaining
 narrow matcher, and it is spelling-agnostic too: `mcp__.*__(await_my_turn|start_watching_channel)`.)
@@ -467,7 +499,7 @@ other and the catalog advertises a version that is not what installs — the doc
 behaviour the user does not have. **Run this from the repo root before every publish:**
 
 ```bash
-node -e "const a=require('./.claude-plugin/marketplace.json').plugins[0].version, b=require('./management-portal/.claude-plugin/plugin.json').version; console.log(a===b?('OK  both '+a):('MISMATCH  catalog='+a+'  plugin='+b)); process.exit(a===b?0:1)"
+node -e "const a=require('./.claude-plugin/marketplace.json').plugins[0].version, b=require('./agent-onboarding/plugin/.claude-plugin/plugin.json').version; console.log(a===b?('OK  both '+a):('MISMATCH  catalog='+a+'  plugin='+b)); process.exit(a===b?0:1)"
 ```
 
 It exits non-zero on a mismatch, so it works as a pre-publish check rather than something to
@@ -490,7 +522,7 @@ remember.
 > ```
 >
 > Then **reload** (`/reload-plugins`) or restart Claude Code, and **verify before you trust it**: run
-> `/plugin` and confirm the installed version reads **1.7.0**. If it does not, you are running older code
+> `/plugin` and confirm the installed version reads **1.7.8**. If it does not, you are running older code
 > no matter what the repository says.
 >
 > **This is per machine.** A bump reaches nobody until each machine updates.
@@ -503,7 +535,7 @@ changed, every time:
 | Channel | What lives there | How it reaches people |
 |---|---|---|
 | **Backend** — `backend/routers/mcp_server.py` (`SERVER_INSTRUCTIONS`) | The canon itself, prepended to every session on every client. | **Deployed.** Reaches *every* MCP client — claude.ai connector, Cursor, Roo, plugin — on their next connect. No reinstall, no version bump. But **only when master deploys**. |
-| **Plugin** — `management-portal/**` | Skills, commands, subagents, hooks, the gate script. | **Version bump → catalog refresh → per-machine reinstall → reload.** The slowest channel and the one with the stale-cache trap above. |
+| **Plugin** — `agent-onboarding/plugin/**` | Skills, commands, subagents, hooks, the gate script. | **Version bump → catalog refresh → per-machine reinstall → reload.** The slowest channel and the one with the stale-cache trap above. |
 | **Website** — `frontend/src/pages/DocsMcp.tsx` | The public `/docs/mcp` page. | Deploys with the frontend. **Informational only** — it changes no client behaviour. |
 
 **The backend deliberately never names a gate id.** A client without the plugin has no gates, and must not

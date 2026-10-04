@@ -167,7 +167,8 @@ and for the status board that says whether a gate is actually live yet.
   `search_journals`. Write **and** read-back; the gate checks for both halves.
 - **(e) Knowledge graph** — `create_knowledge_graph(name)` →
   `add_source_to_knowledge_graph(...)` spanning **the journal folder, notes, boards, tags, the project
-  and its tasks** → `extract_knowledge_graph` (the cheap incremental path) →
+  and its tasks** (plus related earlier graphs and the project's GitHub repos, where they exist) →
+  `extract_knowledge_graph` (the cheap incremental path) →
   `interpret_knowledge_graph` → **read it back** with `get_knowledge_graph` /
   `semantic_search_knowledge_graph`. **Never `regenerate_knowledge_graph` to refresh** — it destroys
   the existing nodes and edges first.
@@ -206,8 +207,9 @@ and for the status board that says whether a gate is actually live yet.
 
 The eight standing rules the owner should never have to type again. A gate id is named where one
 covers the rule — but **check the status board in `canon-gates.md` before relying on any of them.** As of
-plugin 1.5.0 every canon gate reads **ARMED**: the engine ships, it is wired into the hooks, and it is
-fixture-verified — but **no live refusal has been observed against this merged build**, so treat all eight
+plugin 1.7.8 three gates read **ENFORCED** (`CANON-ID`, `CANON-READ-BACK`, `CANON-BOTTOM-UP`, observed
+refusing live) and every other canon gate reads **ARMED**: shipped, wired into the hooks and
+fixture-verified — but **no live refusal has been observed for those**, so treat all eight
 as rules you keep yourself and the gates as a backstop rather than a guarantee. `canon-gates.md` also
 carries the stand-down escape.
 
@@ -257,7 +259,9 @@ halves separately. Pass `logged_at` explicitly when the entry is about an earlie
 `CANON-CLOSEOUT` requires the closure)*
 
 `create_knowledge_graph(name)` → `add_source_to_knowledge_graph` for **each** source kind — the run's
-journal folder, notes, boards, tags, the project, and tasks → `extract_knowledge_graph` →
+journal folder, notes, boards, tags, the project, and tasks, plus when applicable related earlier graphs
+(`{type:"knowledge_graph"}`, via `list_knowledge_graphs`) and the project's repos (`{type:"github_repo",
+id:"owner/repo"}`, via `list_my_github_repos`); a graph never sources itself → `extract_knowledge_graph` →
 `interpret_knowledge_graph` → read it back with `get_knowledge_graph` /
 `semantic_search_knowledge_graph`. Keep updating it and keep reading it back.
 **`regenerate_knowledge_graph` destroys the existing nodes and edges first** — `extract_knowledge_graph`
@@ -340,7 +344,7 @@ has no read path here, that is a coverage gap** — record it for the read=write
 | `create_gig`, `update_gig`, `add/update/delete_gig_*` | `get_gig` / `list_gigs` | gig + packages/faq/requirements |
 | `update_my_profile_extended`, `update_profile`, portfolio/work-history/skills writes | `get_my_full_profile` / `get_my_portfolio` / `get_my_work_history` / `get_my_skills` | profile fields |
 | `create_scheduling_link`, `approve/reject_scheduling_request` | `list_scheduling_links` / `list_scheduling_requests` | scheduling state |
-| `send_chat_message`, `send_dm_message`, `send_inbox_message` | `read_channel_messages` / `read_dm_messages` / `read_inbox` | message posted |
+| `send_chat_message`, `send_dm_message`, `send_inbox_message`, `reply_to_inbox_message`, `forward_inbox_message`, `forward_chat_message` | `read_channel_messages` / `read_dm_messages` / `read_inbox` | message posted. A FORWARD is labelled with who originally wrote it, so a quote cannot arrive as your own words; an inbox REPLY goes to the original sender only, never reply-all. |
 | `start_watching_channel` | `list_channel_watchers` | your status becomes `watching` (the heartbeat is written by `await_my_turn` itself) |
 | `require_channel_watch` | `list_channel_watchers` | the named agent is on the roster — as `NEVER_STARTED` until it actually starts |
 | `release_channel_watch` | `list_channel_watchers(include_released=true)` | the obligation shows as `released` |

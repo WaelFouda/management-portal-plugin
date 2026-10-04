@@ -156,6 +156,15 @@ Create it once the structure exists, and update it as the run goes:
      re-resolved on every extraction, so entries written later join the source by themselves
    - `{type:"project", id:<project>}`
    - `{type:"task", id:<each top-level task>}`
+   - **when applicable** — not every project has a prior graph or a repo:
+     - `{type:"knowledge_graph", id:<each related earlier graph>}` — find them with `list_knowledge_graphs`
+       (by client name, project tags, or search) when earlier work on the same client or product exists.
+       It copies that graph's nodes and edges — no AI cost, re-read only when it changes
+     - `{type:"github_repo", id:"owner/repo"}` — each repository the project's code lives in
+       (`list_my_github_repos` finds it; add `config:{path:"<subdir>"}` for a monorepo, `ref` for a branch/tag/sha).
+       Read with your GitHub connection: code becomes file/symbol/import nodes, README and docs are extracted
+
+   A graph can never source itself, and a cycle between graphs is refused.
 3. `extract_knowledge_graph(graph_id)` — the incremental, cheap path. **Never** `regenerate_knowledge_graph`
    for a refresh: it destroys the nodes and edges first and re-reads every source. `CANON-KG-DESTRUCTIVE`
    refuses it inside a run unless the owner authorised it.
