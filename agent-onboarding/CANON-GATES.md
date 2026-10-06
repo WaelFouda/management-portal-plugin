@@ -55,15 +55,15 @@ described in the plugin README as a gate. Combined with G4 — Pre/PostToolUse `
 being unproven on 2.1.231 — those two reminders may have been reaching nobody at all for their
 entire service life.
 
-**As of 1.5.0 that file is deleted.** `scripts/canon-gate.js` replaces it: 2448 lines as of 1.7.8, a real
+**As of 1.5.0 that file is deleted.** `scripts/canon-gate.js` replaces it: 2496 lines as of 1.7.9, a real
 `PreToolUse` `permissionDecision: "deny"`, wired into 8 of the 11 entries in `hooks/hooks.json`.
 **State the replacement precisely.** What is now true is that the engine **ships**. What is *not* yet
 true is that anyone has watched it refuse a live call on this merged build — its gates are
 **fixture-verified** (`scripts/canon-selftest.js` spawns the real binary under an isolated
-`PORTAL_CANON_HOME`; the suite **currently reports 425 assertions**, an emergent count partly driven
+`PORTAL_CANON_HOME`; the suite **currently reports 438 assertions**, an emergent count partly driven
 off `REGISTER`, so **never quote 321 as a constant**) and several were live-verified on the engine
 lane before the merge, over bytes identical to these. The one place that verdict lives is the status
-board in `plugin/skills/management-portal/canon-gates.md`. As of 1.7.8 it reads **ENFORCED** for three
+board in `plugin/skills/management-portal/canon-gates.md`. As of 1.7.9 it reads **ENFORCED** for three
 gates — `CANON-ID`, `CANON-READ-BACK` and `CANON-BOTTOM-UP`, observed refusing real calls on
 2026-08-16, and the first `CANON-ID` refusals were **false** — and **ARMED, not ENFORCED** for the rest.
 
@@ -181,6 +181,16 @@ must stay word-consistent between them.
   `CANON-FLOW-READ` and `CANON-STATUS-SYNC` close both. Neither can verify the CONTENT — a gate
   cannot know whether a task is really finished, and milestones and tasks share no key — so both
   enforce the honest thing instead: that the record was read before the claim was made.
+- **A board built by a chained `bulk` latched three gates — fixed in 1.7.9.** Measured 2026-10-06:
+  `bulk([create_board, create_board_block{board_id:"{{0.id}}"} ×28])` printed
+  `list_board_blocks("<BLOCK id>")`, a read that takes a board id. The `READ_ARG_SOURCE` owner was the
+  unresolved `{{0.id}}`, and an over-long bulk row lost its inner arguments to the 4 KB line cap, so each
+  block keyed on its own id; `read_board`/`list_board_blocks` print block ids with no `id:` marker, so only
+  20 survived (both ends kept) and one honest `read_board(<board id>)` left the **8 middle blocks**
+  standing. Carried as debt, they refused every write until three gates were stood down. The `{{N.id}}`
+  owner is now resolved against the bulk's own results and kept through the strip, a template is never a
+  key, and the id fingerprints include unmarked uuids — one `read_board(<board id>)` settles all of it,
+  1.7.8 debts already on disk included.
 - **The documented knowledge-graph close-out could never pass — fixed in 1.7.8.** The canon attaches
   sources in ONE call, `add_source_to_knowledge_graph(graph_id, items:[…])`, but `CANON-CLOSEOUT`
   counted source kinds only from a top-level `source_type`, and the ledger's allow-list dropped `items`

@@ -439,6 +439,34 @@ const READ_ARG_SOURCE = {
 };
 
 /**
+ * AN OWNER WRITTEN AS `{{N.id}}` IS NOT AN ID UNTIL THE BULK HAS RUN.
+ *
+ * MEASURED 2026-10-06, three times in one session on 1.7.8. bulk([create_board,
+ * create_board_block{board_id:"{{0.id}}"} x28]) — the documented chaining — printed
+ *   bulk([read_board("<board id>"), list_board_blocks("<BLOCK id>"), ...])
+ * Two ways, one cause. A small bulk kept its arguments, so the owner was the literal
+ * template and the obligation was keyed on "{{0.id}}" — a string no read can name. A large
+ * bulk overran the 4 KB ledger line, append() stripped inner `args`, and every block fell
+ * back to keying on its OWN id, which list_board_blocks cannot take and read_board prints
+ * without a marker (see harvestIdHeads). Eight debts stood after an honest read, carried,
+ * and refused every write until three gates were stood down.
+ *
+ * So the reference is resolved the way the backend resolves it (mcp_server._resolve_refs:
+ * call N's reported id), at PostToolUse where the response is in hand, and stored as `o`
+ * on the inner row so it survives the strip. A template that cannot be resolved is null —
+ * never a key.
+ */
+const RE_BULK_REF_N = /^\{\{\s*(\d+)\s*\.\s*id\s*\}\}$/;
+function bulkRefId(v, inner) {
+  if (typeof v !== 'string') return null;
+  const m = v.trim().match(RE_BULK_REF_N);
+  if (!m) return v;
+  const src = (inner || []).find((x) => x && x.i === Number(m[1]));
+  const id = src && src.ok !== false && (src.ids || [])[0];
+  return (id && L.idShape(id) === 'uuid') ? id : null;
+}
+
+/**
  * A DELETE IS VERIFIED BY ABSENCE, AND UNTIL NOW IT WAS VERIFIED BACKWARDS.
  *
  * `clearReads` only ever discharged an obligation when the written id came BACK in the
@@ -705,10 +733,12 @@ function fold(rows, run) {
     // The OWNER id wins when the mapped read is called with one — see READ_ARG_SOURCE.
     // Without it the obligation keys on the id the write RETURNED, and the call the
     // gate then prints cannot clear it however many times it is run.
+    // An unresolved `{{N.id}}` is never a key — see bulkRefId.
+    const arg = (k) => (args && typeof args[k] === 'string' && !RE_BULK_REF_N.test(args[k].trim())) ? args[k] : null;
     const ownerKey = READ_ARG_SOURCE[tool];
-    const owner = (ownerKey && args && typeof args[ownerKey] === 'string') ? args[ownerKey] : null;
-    const id = owner || (ids && ids[0]) || (args && (args.board_id || args.task_id || args.project_id
-      || args.client_id || args.graph_id || args.note_id)) || null;
+    const owner = ownerKey ? arg(ownerKey) : null;
+    const id = owner || (ids && ids[0]) || arg('board_id') || arg('task_id') || arg('project_id')
+      || arg('client_id') || arg('graph_id') || arg('note_id') || null;
     const key = tool + '|' + (id || tu || String(t));
     // A write made in THIS session keeps whatever `carried` it already had: a `debt` row
     // adopted earlier in the fold marks the same obligation, and a later re-write of it must
@@ -890,7 +920,17 @@ function fold(rows, run) {
       // per-item split came back empty — which is exactly the state every bulk row written
       // before this fix is in, and those rows are still on disk being folded.
       (r.ids || []).forEach((i) => st.seen.add(i));
-      for (const it of (r.inner || [])) apply(it.tool, it.ids, it.ok, it.args || {}, bulkHeads);
+      for (const it of (r.inner || [])) {
+        // The owner as resolved at PostToolUse (`o`), or resolved here for a row that kept
+        // its args — see bulkRefId. Without it a chained child keys on a template or itself.
+        let a = it.args || {};
+        const ok0 = READ_ARG_SOURCE[it.tool];
+        if (ok0) {
+          const o = it.o || bulkRefId(a[ok0], r.inner);
+          if (o !== (a[ok0] || null)) a = Object.assign({}, a, { [ok0]: o });
+        }
+        apply(it.tool, it.ids, it.ok, a, bulkHeads);
+      }
       // A write and its mapped read inside ONE bulk open-and-clear together — that is
       // canon (f) being obeyed correctly and must never block.
     } else {
@@ -1805,6 +1845,14 @@ function modePost(payload) {
       ids: it.ids,
       args: L.safeArgs((calls[it.i] && (calls[it.i].arguments || calls[it.i].args)) || {}),
     }));
+    // Resolve a chained owner (`{{0.id}}`) NOW, while every inner id is in hand, and keep it
+    // as `o` so it outlives append() stripping `args` from an over-long row. See bulkRefId.
+    for (const r0 of rows) {
+      const k0 = READ_ARG_SOURCE[r0.tool];
+      if (!k0 || r0.ok === false || !r0.args || typeof r0.args[k0] !== 'string') continue;
+      const o = bulkRefId(r0.args[k0], rows);
+      if (o) { r0.o = o; r0.args[k0] = o; } else delete r0.args[k0];
+    }
     // A decomposition built with `bulk` — which canon (f) tells the agent to prefer — must
     // credit the run exactly as the single-call path does.
     {

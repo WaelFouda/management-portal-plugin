@@ -1889,6 +1889,112 @@ function caseGapSettleCallTakesTheOwnerId() {
   check('  ...and not with the proposal id it just returned',
     !/get_proposal_detail\("?bbbbbbbb/.test(bp || ''), (bp || '').slice(0, 160));
 }
+function caseGapChainedBoardBulk() {
+  console.log('\nGAP a board built by a CHAINED bulk must settle on the BOARD id');
+  // MEASURED 2026-10-06, three times in one session on 1.7.8. bulk([create_board,
+  // create_board_block{board_id:"{{0.id}}"} x28]) left the gate printing
+  //   bulk([read_board("<board id>"), list_board_blocks("<BLOCK id>"), ...])
+  // and a direct read_board(<board id>) then cleared all but the 8 blocks from the MIDDLE.
+  // The debt carried, and the debt gates refused every write and a Bash re-arm until three
+  // gates were stood down. Shapes below are the backend's own (board_tools.py): a block is
+  // created as "Block created [id: X]", and read_board/list_board_blocks print block ids
+  // WITHOUT an id: marker.
+  const BOARD = UUID_B;
+  const N = 28;
+  const blk = (n) => 'c0' + String(n).padStart(6, '0') + '-b10c-4b10-8b10-' + String(n).padStart(12, '0');
+  const calls = [{ tool: 'create_board', arguments: { title: 'Alignment' } }];
+  let resp = 'Ran ' + (N + 1) + '/' + (N + 1) + ' call(s); 0 failed.\n'
+    + '[0] create_board: ✅ Board created: Alignment [id: ' + BOARD + ']';
+  for (let n = 1; n <= N; n++) {
+    calls.push({ tool: 'create_board_block', arguments: { board_id: '{{0.id}}', type: 'text', content: { text: 'Section ' + n } } });
+    resp += '\n[' + n + '] create_board_block: ✅ Block created [id: ' + blk(n) + ']';
+  }
+  const readBoardResp = 'Board: Alignment\nBlocks (' + N + '), comments (0); board-level: 0\n' + '-'.repeat(60) + '\n'
+    + Array.from({ length: N }, (_, k) => '  - [' + blk(k + 1) + '] type=text pos=' + (k + 1) + ' comments=0 | Section ' + (k + 1)).join('\n');
+  const listBlocksResp = 'id | type | position | parent_id | preview\n' + '-'.repeat(100) + '\n'
+    + Array.from({ length: N }, (_, k) => blk(k + 1) + ' | text | ' + (k + 1) + ' | - | Section ' + (k + 1)).join('\n');
+  const namesABlock = (s) => /(list_board_blocks|read_board)\("c0\d{6}-/.test(s || '');
+  const namesATemplate = (s) => /\("?\{\{/.test(s || '');
+
+  // (a) The printed settling call names the BOARD and never a block or a template.
+  const sid = fresh();
+  const b = blockOf(gate('post', post(sid, MCP + 'bulk', { calls }, resp)));
+  check('chained bulk: the settling call names the board id',
+    /(read_board|list_board_blocks)\("bbbbbbbb/.test(b || ''), (b || '(no block)').slice(0, 300));
+  check('  …and never hands list_board_blocks/read_board a BLOCK id', !namesABlock(b), (b || '').slice(0, 300));
+  check('  …and never a {{N.id}} template', !namesATemplate(b), (b || '').slice(0, 300));
+  const sb = blockOf(gate('stop', stop(sid, false)));
+  check('chained bulk: the Stop gate prints the same board-only call',
+    /create_board_block/.test(sb || '') && !namesABlock(sb) && !namesATemplate(sb), (sb || '(no block)').slice(0, 300));
+
+  // A SMALL chained bulk fits the ledger line with its arguments intact — which on 1.7.8
+  // keyed the obligation on the literal "{{0.id}}" and printed list_board_blocks("{{0.id}}").
+  const sidS = fresh();
+  const small = blockOf(gate('post', post(sidS, MCP + 'bulk', { calls: calls.slice(0, 2) },
+    'Ran 2/2 call(s); 0 failed.\n[0] create_board: ✅ Board created: A [id: ' + BOARD + ']\n'
+    + '[1] create_board_block: ✅ Block created [id: ' + blk(1) + ']')));
+  check('small chained bulk: no obligation is keyed on the template',
+    Boolean(small) && !namesATemplate(small) && !namesABlock(small), (small || '(no block)').slice(0, 300));
+
+  // (b) ONE direct read_board(board) discharges every obligation the bulk opened — and one
+  // list_board_blocks(board), whose rows carry no id: marker either, discharges every BLOCK
+  // (create_board itself maps to read_board/list_boards, so it rightly stays for that one).
+  for (const [tool, body, owed] of [['read_board', readBoardResp, /create_board/],
+    ['list_board_blocks', listBlocksResp, /create_board_block/]]) {
+    const s2 = fresh();
+    gate('post', post(s2, MCP + 'bulk', { calls }, resp));
+    gate('post', post(s2, MCP + tool, { board_id: BOARD }, body));
+    const after = blockOf(gate('stop', stop(s2, false)));
+    check('one direct ' + tool + '(board) discharges all ' + N + ' block obligations',
+      !owed.test(after || ''), (after || '').slice(0, 300));
+  }
+  // (control) a read of some OTHER board settles nothing.
+  const s3 = fresh();
+  gate('post', post(s3, MCP + 'bulk', { calls }, resp));
+  gate('post', post(s3, MCP + 'read_board', { board_id: UUID_C }, 'Board: Other\nBlocks (1), comments (0); board-level: 0\n  - ['
+    + 'dddddddd-4444-4444-8444-dddddddddddd] type=text pos=0 comments=0 | x'));
+  const other = blockOf(gate('stop', stop(s3, false)));
+  check('(control) a read of a DIFFERENT board leaves the block obligations standing',
+    /create_board_block/.test(other || ''), (other || '(no block)').slice(0, 200));
+
+  // (c) The debt carried into the next turn is discharged by that same one read.
+  const sid4 = fresh();
+  cli(RUN_ARGS);
+  seedSeen(sid4, UUID_A);
+  gate('prompt', { session_id: sid4, cwd: PROJ, hook_event_name: 'UserPromptSubmit', prompt: 'go' });
+  gate('post', post(sid4, MCP + 'bulk', { calls }, resp));
+  gate('stop', stop(sid4, false));
+  gate('stop', stop(sid4, true));
+  const p = gate('prompt', { session_id: sid4, cwd: PROJ, hook_event_name: 'UserPromptSubmit', prompt: 'carry on' });
+  const ctx = (p.json && p.json.hookSpecificOutput && p.json.hookSpecificOutput.additionalContext) || '';
+  check('carried chained-bulk debt: the notice names the board only',
+    /ONE CALL SETTLES IT/.test(ctx) && /\("bbbbbbbb/.test(ctx) && !namesABlock(ctx) && !namesATemplate(ctx), ctx.slice(0, 400));
+  check('(precondition) the carried debt refuses work',
+    /CANON-DEBT-READ-BACK/.test(denialOf(gate('pre', pre(sid4, MCP + 'update_task', { task_id: UUID_A }))) || ''));
+  gate('post', post(sid4, MCP + 'read_board', { board_id: BOARD }, readBoardResp));
+  const d4 = denialOf(gate('pre', pre(sid4, MCP + 'update_task', { task_id: UUID_A })));
+  check('one read_board(board) settles the carried chained-bulk debt', d4 === null, d4 || '');
+
+  // (c') A debt ALREADY ON DISK from 1.7.8 — keyed on the eight middle BLOCK ids — must be
+  // dischargeable by the same honest read, or upgrading leaves the owner latched.
+  const sid5 = fresh();
+  cli(RUN_ARGS);
+  const rb = [];
+  for (let n = 11; n <= 18; n++) rb.push({ w: 'create_board_block', id: blk(n), tu: null, neg: 0 });
+  spawnSync(process.execPath, ['-e',
+    'const L=require(' + JSON.stringify(path.join(__dirname, 'canon-lib.js')) + ');'
+    + 'L.writeDebt(' + JSON.stringify(PROJ) + ',{v:1,at:L.nowS(),rb:' + JSON.stringify(rb) + ',co:[],corun:null});'],
+  { encoding: 'utf8', env: env(), timeout: 20000 });
+  gate('session-start', { session_id: sid5, cwd: PROJ, hook_event_name: 'SessionStart' });
+  gate('prompt', { session_id: sid5, cwd: PROJ, hook_event_name: 'UserPromptSubmit', prompt: 'pick it up' });
+  seedSeen(sid5, UUID_A);
+  check('(precondition) the 1.7.8 block-keyed debt refuses work',
+    /CANON-DEBT-READ-BACK/.test(denialOf(gate('pre', pre(sid5, MCP + 'update_task', { task_id: UUID_A }))) || ''));
+  gate('post', post(sid5, MCP + 'read_board', { board_id: BOARD }, readBoardResp));
+  const d5 = denialOf(gate('pre', pre(sid5, MCP + 'update_task', { task_id: UUID_A })));
+  check('one read_board(board) settles a 1.7.8 debt keyed on middle block ids', d5 === null, d5 || '');
+}
+
 function caseGapSettleCallTakesThatId() {
   console.log('\nGAP the call a gate NAMES must accept the id it prints');
   // MEASURED 2026-08-17, two defects surfaced by one probe node.
@@ -2274,7 +2380,7 @@ function run() {
     caseP8, caseO1, caseS1, caseNoRepeat, caseBudget, caseEscapes, caseFailSafe, casePrivacy,
     caseLifecycle, caseTools,
     caseGapShellSurface, caseGapTreeFirstEffect, caseGapBulk, caseGapBulkResponseShape,
-    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapBoardAndStatusEnforced, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapBriefReadBackIsDischargeable, caseGapBoundaryInsideABulk, caseGapSettleCallTakesThatId, caseGapSettleCallTakesTheOwnerId, caseGapReArmIsReachable, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
+    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapBoardAndStatusEnforced, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapBriefReadBackIsDischargeable, caseGapBoundaryInsideABulk, caseGapSettleCallTakesThatId, caseGapSettleCallTakesTheOwnerId, caseGapChainedBoardBulk, caseGapReArmIsReachable, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
     caseGapIdProvenance, caseGapScope,
     caseDebtReadBack, caseDebtSeams, caseDebtThisTurn, caseDebtCloseout, caseGapSourceKindsFromItems, caseDebtDegrades, caseDebtColdReturn,
     caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath];

@@ -207,7 +207,7 @@ and for the status board that says whether a gate is actually live yet.
 
 The eight standing rules the owner should never have to type again. A gate id is named where one
 covers the rule — but **check the status board in `canon-gates.md` before relying on any of them.** As of
-plugin 1.7.8 three gates read **ENFORCED** (`CANON-ID`, `CANON-READ-BACK`, `CANON-BOTTOM-UP`, observed
+plugin 1.7.9 three gates read **ENFORCED** (`CANON-ID`, `CANON-READ-BACK`, `CANON-BOTTOM-UP`, observed
 refusing live) and every other canon gate reads **ARMED**: shipped, wired into the hooks and
 fixture-verified — but **no live refusal has been observed for those**, so treat all eight
 as rules you keep yourself and the gates as a backstop rather than a guarantee. `canon-gates.md` also

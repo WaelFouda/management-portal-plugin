@@ -90,7 +90,7 @@ Generate the key in the web app → **Settings → API Keys → Generate**.
 | `scripts/canon-gate.js` | The canon gates: `PreToolUse` refusals, `PostToolUse`/`Stop` compulsions, turn-end advisories, plus `stand-down`, `doctor` and `selftest` modes. |
 | `scripts/watch-alarm.js` | The ABSENT alarm and the turn-end gate. Node, no dependencies. |
 
-### What actually enforces — stated plainly, as of plugin 1.7.8
+### What actually enforces — stated plainly, as of plugin 1.7.9
 
 The canon gates ship and are wired into the plugin's hooks. Not every gate has the same evidence behind
 it, and it is worth knowing which is which:
@@ -106,7 +106,7 @@ it, and it is worth knowing which is which:
   [`management-portal/skills/management-portal/canon-gates.md`](management-portal/skills/management-portal/canon-gates.md);
   where this page and that board disagree, the board wins.
 
-### What's new in 1.7.8 (since the last published 1.7.5)
+### What's new in 1.7.9 (since 1.7.5)
 
 - **1.7.8 — project knowledge graphs can be seeded with related earlier graphs and GitHub repos.** Both
   are new source kinds (`knowledge_graph`, `github_repo`), and the close-out gate now counts sources added

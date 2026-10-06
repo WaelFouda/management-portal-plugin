@@ -236,7 +236,11 @@ function append(key, obj) {
       // a gate refuse honest work, so this now discards fields in order of expendability
       // and re-serialises, and the line it writes always parses.
       if (line.length > 4000 && obj.inner) {
-        obj.inner = obj.inner.map((r) => ({ i: r.i, tool: r.tool, ok: r.ok, ids: trimIds(r.ids, 8) }));
+        // `o` (the resolved owner id — see READ_ARG_SOURCE in canon-gate) survives the strip:
+        // it is what the obligation is keyed on, and losing it with `args` re-keyed every
+        // block of a chained board bulk on its own block id. Measured 2026-10-06.
+        obj.inner = obj.inner.map((r) => Object.assign({ i: r.i, tool: r.tool, ok: r.ok, ids: trimIds(r.ids, 8) },
+          r.o ? { o: r.o } : {}));
         line = JSON.stringify(obj);
       }
       if (line.length > 4000 && obj.args) { delete obj.args; line = JSON.stringify(obj); }
@@ -461,6 +465,13 @@ function harvestIdHeads(text, cap) {
   while ((m = RE_ID_BRACKET.exec(body)) && heads.size < limit) heads.add(m[1].toLowerCase().slice(0, 8));
   RE_ID_LOOSE.lastIndex = 0;
   while ((m = RE_ID_LOOSE.exec(body)) && heads.size < limit) heads.add(m[1].toLowerCase().slice(0, 8));
+  // UNMARKED UUIDS TOO, after the marked ones. MEASURED 2026-10-06: read_board prints a
+  // block as `- [<uuid>] type=…` and list_board_blocks as `<uuid> | …` — no `id:` marker —
+  // so a 28-block listing put no heads here at all, and its ids reached the row only through
+  // harvestSeen's WIDE tier, capped at 20 by trimIds (10 head + 10 tail). Exactly the 8
+  // blocks in the middle could then never be vouched for. Marked ids still win the cap.
+  RE_UUID_G.lastIndex = 0;
+  while ((m = RE_UUID_G.exec(body)) && heads.size < limit) heads.add(m[0].toLowerCase().slice(0, 8));
   return [...heads];
 }
 

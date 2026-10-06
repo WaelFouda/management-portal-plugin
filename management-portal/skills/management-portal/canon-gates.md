@@ -66,7 +66,7 @@ carries one of exactly four states, and **no state is ever quietly rounded up to
 | **ADVISORY** | Verified to only inject text. It can be ignored, and sometimes should be. |
 | **PENDING** | Neither the code nor the evidence. The design exists; nothing else does. Treat as advisory until proven. |
 
-### As of 2026-09-27 — plugin 1.7.8 (two rules stopped being prose in 1.7.0)
+### As of 2026-10-06 — plugin 1.7.9 (two rules stopped being prose in 1.7.0)
 
 **The engine ships.** `scripts/canon-gate.js` is present, 2448 lines, and emits a real `PreToolUse`
 `hookSpecificOutput.permissionDecision: "deny"`. `hooks/hooks.json` holds **11 hook entries**, and

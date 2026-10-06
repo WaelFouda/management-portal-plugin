@@ -32,7 +32,7 @@ key to create, paste or store. The plugin ships no `userConfig` prompt, and its 
 
 ---
 
-# The canon gates (1.7.8) — READ THE ESCAPE FIRST
+# The canon gates (1.7.9) — READ THE ESCAPE FIRST
 
 1.5.0 turns parts of the agent discipline from **reminders** into **hooks that refuse**. Before anything
 else, here is how to turn them off, because someone reading this section is usually reading it because
@@ -110,9 +110,9 @@ graph closure and final journal (`CANON-CLOSEOUT`).
 deny on the fourth single write cannot undo the first three), status discipline (`CANON-STATUS`), and
 completeness (`CANON-COMPLETE` — which names empty **fields** and never judges what is written in them).
 
-> ### ⚠️ Status, as of plugin 1.7.8 — three gates verified live, the rest armed
+> ### ⚠️ Status, as of plugin 1.7.9 — three gates verified live, the rest armed
 >
-> **The engine ships.** `scripts/canon-gate.js` is present, 2448 lines, emits a real `PreToolUse`
+> **The engine ships.** `scripts/canon-gate.js` is present, 2496 lines, emits a real `PreToolUse`
 > `permissionDecision: "deny"`, and `hooks/hooks.json` wires it into 8 of the 11 hook entries. The
 > advisory `portal-gate.js` it replaces has been **deleted**. Every canon gate above therefore reads
 > **ARMED** — shipped, wired, and **fixture-verified** by `scripts/canon-selftest.js`, which spawns the
@@ -127,7 +127,7 @@ completeness (`CANON-COMPLETE` — which names empty **fields** and never judges
 > parent's own uuid.
 >
 > **ARMED still is not ENFORCED for the rest**, and must not be written up as one. Everything not named
-> above is fixture-verified by `scripts/canon-selftest.js` (425 assertions) and has not been seen refusing
+> above is fixture-verified by `scripts/canon-selftest.js` (438 assertions) and has not been seen refusing
 > a live call. The status board in `skills/management-portal/canon-gates.md` remains the one place that
 > verdict lives; this box mirrors it and the two are required to agree.
 >
@@ -166,6 +166,21 @@ node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" selftest   # fixture payloads 
 ```
 
 ## Known failure modes — named, not hidden
+
+- **A board built by a chained `bulk` latched three gates — fixed in 1.7.9.** Measured 2026-10-06,
+  three times in one session: `bulk([create_board, create_board_block{board_id:"{{0.id}}"} ×28])` — the
+  documented chaining — made the gate print `list_board_blocks("<BLOCK id>")`, a call that takes a board
+  id and can never succeed. Two defects under one symptom. The owner id `READ_ARG_SOURCE` keys on was the
+  unresolved template `{{0.id}}` — and on a bulk that long the 4 KB ledger line stripped the inner
+  arguments anyway, so every block fell back to keying on its own id. Then `read_board` and
+  `list_board_blocks` print block ids **without** an `id:` marker, so they reached the ledger only
+  through the wide tier, capped at 20 by keeping both ends: a direct `read_board(<board id>)` cleared
+  all but the **8 blocks in the middle**. Those carried as debt, and `CANON-READ-BACK`,
+  `CANON-READ-BACK-STOP` and `CANON-DEBT-READ-BACK` refused every write — and a Bash re-arm — until three
+  gates were stood down. Now a `{{N.id}}` owner is resolved against the bulk's own results (the way the
+  backend resolves it) and kept on the row through the strip, a template is never a key, and the id
+  fingerprints cover unmarked uuids too — so one `read_board(<board id>)` settles every block, including a
+  debt 1.7.8 already left on disk keyed on block ids.
 
 - **The documented knowledge-graph close-out could never pass — fixed in 1.7.8.** The canon says to attach
   sources in ONE call, `add_source_to_knowledge_graph(graph_id, items:[…])`, but `CANON-CLOSEOUT` counted
@@ -522,7 +537,7 @@ remember.
 > ```
 >
 > Then **reload** (`/reload-plugins`) or restart Claude Code, and **verify before you trust it**: run
-> `/plugin` and confirm the installed version reads **1.7.8**. If it does not, you are running older code
+> `/plugin` and confirm the installed version reads **1.7.9**. If it does not, you are running older code
 > no matter what the repository says.
 >
 > **This is per machine.** A bump reaches nobody until each machine updates.
