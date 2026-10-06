@@ -245,6 +245,12 @@ function append(key, obj) {
       }
       if (line.length > 4000 && obj.args) { delete obj.args; line = JSON.stringify(obj); }
       if (line.length > 4000 && Array.isArray(obj.ids)) { obj.ids = trimIds(obj.ids, 16); line = JSON.stringify(obj); }
+      // `idh` is cut to 150 BEFORE `inner` can go. Since 1.8.0 the heads of every PENDING id
+      // the response actually contains are written first (see pendingVouchHeads in
+      // canon-gate), so this cut can no longer reach the one that matters — whereas dropping
+      // `inner` drops the very row the fold replays to discharge anything at all. Measured:
+      // a bulk carrying one 156-connection listing lost its `inner` here and settled nothing.
+      if (line.length > 4000 && Array.isArray(obj.idh) && obj.idh.length > 150) { obj.idh = obj.idh.slice(0, 150); line = JSON.stringify(obj); }
       // `inner` is dropped LAST and only when nothing else will fit, because each inner row
       // is a call whose ids can discharge an obligation. When it does go, the coarse
       // top-level `ids` still carries the harvest — which is why that field exists.

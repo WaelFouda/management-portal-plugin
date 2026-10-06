@@ -2323,6 +2323,109 @@ function caseGapReadBackLongList() {
     /CANON-READ-BACK/.test(blockOf(r) || ''), (blockOf(r) || '').slice(0, 160));
 }
 
+function caseGapReadBackPastTheHeadCap() {
+  console.log('\nGAP a read vouches for EVERY id it returns, not just the first few hundred');
+  // MEASURED 2026-10-06 on 1.7.9. list_flow_connections returned 156 connections, each row
+  // carrying its own id and the two cluster ids it joins -- ~470 uuids. harvestIdHeads kept
+  // at most 300 fingerprints, and append() then cut an over-long row's `idh` to 150. The
+  // just-created connection was the LAST marked row, so its fingerprint never reached the
+  // ledger and the debt for create_flow_connection could never clear, however often the
+  // exact read the gate named was run. The pending id must be matched against the FULL
+  // output, whatever its position and however long the listing.
+  // Distinct RANDOM-looking ids, as the portal issues them. A zero-padded counter would share
+  // one 8-char prefix across the whole listing and hide the cap entirely (measured: it did).
+  const uuidN = (n) => { const h = require('crypto').createHash('sha1').update('conn-' + n).digest('hex');
+    return h.slice(0, 8) + '-' + h.slice(8, 12) + '-4' + h.slice(13, 16) + '-8' + h.slice(17, 20) + '-' + h.slice(20, 32); };
+  const NEW = 'a60272c4-6438-4064-9e2e-0d90c4d53f04';
+  const lines = [];
+  for (let i = 0; i < 155; i++) {
+    lines.push('- ' + uuidN(2000 + i) + ' → ' + uuidN(3000 + i) + " 'depends on' details: step ordering [id: " + uuidN(i) + ']');
+  }
+  lines.push('- ' + uuidN(4000) + ' → ' + uuidN(4001) + " 'new' details: [id: " + NEW + ']');
+  const listing = 'Found 156 connection(s):\n' + lines.join('\n');
+  const uuids = (listing.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g) || []).length;
+  check('fixture really is a ~470-uuid listing with the pending id LAST', uuids >= 465
+    && listing.lastIndexOf(NEW) > listing.length - 60, uuids + ' uuids');
+
+  // Direct read.
+  let sid = fresh();
+  gate('post', post(sid, MCP + 'create_flow_connection', {}, 'Connection created between a and b with ID ' + NEW));
+  gate('post', post(sid, MCP + 'list_flow_connections', {}, listing));
+  let r = gate('stop', stop(sid));
+  check('a 156-connection (~470-uuid) listing discharges the debt for the LAST id',
+    !/CANON-READ-BACK/.test(blockOf(r) || ''), (blockOf(r) || '').slice(0, 160));
+
+  // The same read batched into a bulk must discharge exactly like a direct one.
+  sid = fresh();
+  gate('post', post(sid, MCP + 'create_flow_connection', {}, 'Connection created between a and b with ID ' + NEW));
+  gate('post', post(sid, MCP + 'bulk', { calls: [{ tool: 'list_flow_connections', arguments: {} }] },
+    'Ran 1/1 call(s); 0 failed.\n[0] list_flow_connections: ' + listing));
+  r = gate('stop', stop(sid));
+  check('the same listing inside a bulk discharges it too',
+    !/CANON-READ-BACK/.test(blockOf(r) || ''), (blockOf(r) || '').slice(0, 160));
+
+  // Still a gate: the same 470-uuid listing WITHOUT the written id must leave the debt open.
+  sid = fresh();
+  gate('post', post(sid, MCP + 'create_flow_connection', {}, 'Connection created between a and b with ID ' + NEW));
+  gate('post', post(sid, MCP + 'list_flow_connections', {}, listing.replace(NEW, uuidN(9999))));
+  r = gate('stop', stop(sid));
+  check('a ~470-uuid listing that lacks the written id still owes the read-back',
+    /CANON-READ-BACK/.test(blockOf(r) || ''), (blockOf(r) || '').slice(0, 160));
+
+  // A DELETE is verified by absence -- a long listing that STILL contains the deleted id at
+  // the very end must not discharge it just because the id fell past the fingerprint cap.
+  sid = fresh();
+  gate('post', post(sid, MCP + 'delete_flow_connection', { connection_id: NEW }, 'Connection ' + NEW + ' deleted'));
+  gate('post', post(sid, MCP + 'list_flow_connections', {}, listing));
+  r = gate('stop', stop(sid));
+  check('a deleted id still present at the END of a long listing keeps the delete unverified',
+    /CANON-READ-BACK/.test(blockOf(r) || ''), (blockOf(r) || '').slice(0, 160));
+
+  // Memory stays bounded: the ledger row for that listing still parses and fits the line.
+  const dir = path.join(HOME, 'sessions');
+  let maxLine = 0;
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      for (const l of fs.readFileSync(path.join(dir, f), 'utf8').split('\n')) if (l) { JSON.parse(l); maxLine = Math.max(maxLine, l.length); }
+    }
+  } catch (e) { maxLine = -1; }
+  check('every ledger line still parses and stays within the 4 KB line', maxLine > 0 && maxLine <= 4096, 'max ' + maxLine);
+}
+
+function caseStatusJson() {
+  console.log('\nSTATUS `status --json` — the 1.8.0 mod\'s read-only window onto the canon');
+  // The mod (hooks/mods/register.tsx) draws its status line, cockpit and gate band from this
+  // command. It must report what the gates would say, and it must NEVER change what they see:
+  // a status line polled every ten seconds that closed stale runs or deleted expired debt
+  // would be a second, unreviewed gate.
+  const sid = fresh();
+  gate('post', post(sid, MCP + 'create_task', { project_id: UUID_A }, 'Task created [id: ' + UUID_B + ']'));
+  const snap = () => {
+    const out = {};
+    const walk = (d) => { let es = []; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch (_) { return; }
+      for (const e of es) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else out[p] = fs.statSync(p).mtimeMs + ':' + fs.statSync(p).size; } };
+    walk(HOME);
+    return JSON.stringify(out);
+  };
+  const before = snap();
+  const r = cli(['status', '--json', '--session', sid, '--cwd', PROJ]);
+  let s = null;
+  try { s = JSON.parse((r.stdout || '').trim().split('\n').pop()); } catch (_) { s = null; }
+  check('status --json prints one parseable snapshot', Boolean(s && s.v === 1 && s.gates), (r.stdout || '').slice(0, 120));
+  check('it names this session\'s open read-back and the call that settles it',
+    Boolean(s && s.owed.some((o) => o.w === 'create_task' && o.id === UUID_B) && /get_task\("/.test(s.settle || '')),
+    s ? JSON.stringify(s.owed) + ' ' + s.settle : '');
+  check('every gate is counted armed with nothing stood down', Boolean(s && s.gates.armed === s.gates.total && !s.gates.stood.length));
+  check('it wrote nothing into the canon home', snap() === before);
+  fs.writeFileSync(path.join(HOME, 'STAND-DOWN-CANON-READ-BACK'), 'test');
+  const r2 = cli(['status', '--json', '--session', sid, '--cwd', PROJ]);
+  let s2 = null;
+  try { s2 = JSON.parse((r2.stdout || '').trim().split('\n').pop()); } catch (_) { s2 = null; }
+  check('a stood-down gate is listed with its reason',
+    Boolean(s2 && s2.gates.stood.some((g) => g.id === 'CANON-READ-BACK' && /sentinel/.test(g.why || ''))));
+  check('and the armed count drops by exactly one', Boolean(s && s2 && s2.gates.armed === s.gates.armed - 1));
+}
+
 function caseGapCanonHomeDiscovery() {
   console.log('\nGAP the CLI and the hooks must resolve the SAME canon home');
   // MEASURED. CLAUDE_PLUGIN_DATA is set for a hook invocation and UNSET for a CLI one, and
@@ -2380,7 +2483,7 @@ function run() {
     caseP8, caseO1, caseS1, caseNoRepeat, caseBudget, caseEscapes, caseFailSafe, casePrivacy,
     caseLifecycle, caseTools,
     caseGapShellSurface, caseGapTreeFirstEffect, caseGapBulk, caseGapBulkResponseShape,
-    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapBoardAndStatusEnforced, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapBriefReadBackIsDischargeable, caseGapBoundaryInsideABulk, caseGapSettleCallTakesThatId, caseGapSettleCallTakesTheOwnerId, caseGapChainedBoardBulk, caseGapReArmIsReachable, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapCanonHomeDiscovery,
+    caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapBoardAndStatusEnforced, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapBriefReadBackIsDischargeable, caseGapBoundaryInsideABulk, caseGapSettleCallTakesThatId, caseGapSettleCallTakesTheOwnerId, caseGapChainedBoardBulk, caseGapReArmIsReachable, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapReadBackPastTheHeadCap, caseStatusJson, caseGapCanonHomeDiscovery,
     caseGapIdProvenance, caseGapScope,
     caseDebtReadBack, caseDebtSeams, caseDebtThisTurn, caseDebtCloseout, caseGapSourceKindsFromItems, caseDebtDegrades, caseDebtColdReturn,
     caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath];

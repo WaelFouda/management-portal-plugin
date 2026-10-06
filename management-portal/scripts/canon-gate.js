@@ -1817,6 +1817,62 @@ function modePre(payload) {
 
 const POST_BLOCK_CAP = 12;
 
+/**
+ * A READ VOUCHES FOR EVERY ID IT RETURNS — matched against the FULL output, not a sample.
+ *
+ * MEASURED 2026-10-06 on 1.7.9. list_flow_connections returned 156 connections, each row
+ * carrying its own id and the two cluster ids it joins: ~470 uuids. harvestIdHeads keeps
+ * at most ID_HEAD_CAP (300) fingerprints, and append() then cuts an over-long row's `idh`
+ * to 150. The just-created connection was the LAST marked row, so its fingerprint never
+ * reached the ledger and the debt for create_flow_connection a60272c4-… could not clear,
+ * however often the exact read the gate printed was run. Every earlier fix chose WHICH ids
+ * to keep from a listing; any such choice fails for some position once a listing outgrows
+ * the line.
+ *
+ * So the question is turned round. The ids that matter are already known — they are the
+ * open obligations (plus, for a bulk, the writes made earlier in the same bulk), a handful
+ * at a time — so each is looked for, verbatim and whole, in the entire response, and the
+ * ones found are written FIRST in `idh`, where no trim reaches them. Memory stays bounded
+ * by the number of pending ids (VOUCH_MAX), never by the length of the listing.
+ *
+ * It is a discharge aid exactly like idh itself: it never feeds the seen set. A delete is
+ * served by it too — a deleted id still present at the end of a long listing is now SEEN
+ * as present, so the absence check no longer passes merely because the id fell off the cap.
+ */
+const MAPPED_READS = new Set([].concat(...Object.values(WRITE_READ_MAP)));
+const VOUCH_SCAN_CAP = 4 * 1024 * 1024;
+const VOUCH_MAX = 64;
+
+function pendingVouchHeads(key, cwd, readTools, extraCands, fullText) {
+  try {
+    if (!fullText || !readTools.some((x) => MAPPED_READS.has(x))) return [];
+    const cands = new Set();
+    const add = (v) => {
+      if (typeof v !== 'string') return;
+      const id = v.trim().toLowerCase();
+      const shape = L.idShape(id);
+      if (shape === 'uuid' || (shape === 'slug' && id.length >= 12)) cands.add(id);
+    };
+    for (const c of extraCands || []) add(c);
+    const st = fold(L.readFamily(key), L.resolveRun(cwd));
+    for (const o of st.obligations.values()) add(o.id);
+    if (!cands.size) return [];
+    const hay = (fullText.length > VOUCH_SCAN_CAP ? fullText.slice(0, VOUCH_SCAN_CAP) : fullText).toLowerCase();
+    const out = [];
+    for (const c of cands) {
+      if (out.length >= VOUCH_MAX) break;
+      if (hay.includes(c)) out.push(c.slice(0, 8));
+    }
+    return out;
+  } catch (_) { return []; }
+}
+
+/** Vouched heads first, so append()'s trim of an over-long row can never reach them. */
+function withVouched(vouched, heads) {
+  if (!vouched || !vouched.length) return heads;
+  return [...new Set([...vouched, ...(heads || [])])];
+}
+
 function modePost(payload) {
   const key = L.sessionKey(payload);
   const raw = payload.tool_name || '';
@@ -1826,7 +1882,8 @@ function modePost(payload) {
   // MUST go through responseText: an MCP tool_response is content blocks, not a string,
   // and stringifying it escapes every newline — which made the line-anchored bulk item
   // regex match nothing and emptied `inner` on every bulk row ever written.
-  let resp = L.responseText(respRaw);
+  const respFull = L.responseText(respRaw);
+  let resp = respFull;
   if (resp.length > 65536) resp = resp.slice(0, 65536);
   const ok = !(respRaw && typeof respRaw === 'object' && respRaw.isError);
 
@@ -1899,7 +1956,10 @@ function modePost(payload) {
     }
     const m = resp.match(/Ran\s+(\d+)\/(\d+)\s+call\(s\);\s*(\d+)\s+failed/);
     L.append(key, {
-      v: 1, t, k: 'bulk', s: key, a: agent, tool: 'bulk', idh: L.harvestIdHeads(resp),
+      v: 1, t, k: 'bulk', s: key, a: agent, tool: 'bulk',
+      idh: withVouched(pendingVouchHeads(key, payload.cwd, rows.map((r0) => r0.tool).concat(names),
+        [].concat(...rows.filter((r0) => r0.ok !== false && WRITE_READ_MAP[r0.tool])
+          .map((r0) => [r0.o, (r0.ids || [])[0]])), respFull), L.harvestIdHeads(resp)),
       n: m ? Number(m[2]) : rows.length, ran: m ? Number(m[1]) : rows.filter((r) => r.ok).length,
       failed: m ? Number(m[3]) : rows.filter((r) => !r.ok).length,
       // `ids` is the SAFETY NET, and it is here because its absence is what turned one
@@ -1910,7 +1970,8 @@ function modePost(payload) {
     });
   } else {
     L.append(key, {
-      v: 1, t, k: 'post', s: key, a: agent, tool: bare || raw, raw, ok, ids, idh: L.harvestIdHeads(resp),
+      v: 1, t, k: 'post', s: key, a: agent, tool: bare || raw, raw, ok, ids,
+      idh: withVouched(pendingVouchHeads(key, payload.cwd, [bare], [], respFull), L.harvestIdHeads(resp)),
       args: L.safeArgs(input), tu: payload.tool_use_id || null, ms: payload.duration_ms || null,
     });
     // The decomposition is a durable fact about the RUN, not about this session. Recorded
@@ -2426,6 +2487,74 @@ function cliDoctor() {
   process.exit(0);
 }
 
+/**
+ * `status --json [--session <id>] [--cwd <dir>]` — one READ-ONLY snapshot of the canon, for the
+ * 1.8.0 mod (status line, cockpit pane, gate band). Added so the mod reuses this file's own fold
+ * and canon-lib instead of re-deriving gate state in a second implementation that could drift.
+ *
+ * READ-ONLY BY CONSTRUCTION: it never appends to the ledger, never closes a stale run and never
+ * deletes an expired debt (resolveRun and readDebt both do, which is right for a hook and wrong
+ * for a status line polled every few seconds). It reports; the gates decide. Nothing it prints
+ * can arm, disarm or settle anything — the mod is never part of enforcement.
+ */
+function cliStatusJson() {
+  const argv = process.argv.slice(3);
+  const opt = (k) => { const i = argv.indexOf('--' + k); return i >= 0 && argv[i + 1] ? argv[i + 1] : null; };
+  const cwd = opt('cwd') || process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  const session = opt('session');
+  const res = { v: 1, home: L.HOME, homeVia: L.HOME_SOURCE, mode: L.canonMode(), run: null,
+    gates: { total: REGISTER.length, armed: 0, stood: [] }, owed: [], settle: null, journal: null,
+    closeout: [], debt: null };
+  try {
+    let pluginVersion = null;
+    try { pluginVersion = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '.claude-plugin', 'plugin.json'), 'utf8')).version; } catch (_) {}
+    res.plugin = pluginVersion;
+    // The run, read without resolveRun's stale-close write.
+    const ptr = L.readJSON(L.pointerFile(L.projHash(cwd)));
+    let run = ptr && ptr.run_id ? L.readJSON(L.runFile(ptr.run_id)) : null;
+    if (run) {
+      const last = Number(run.last_progress_at || run.created_at || 0);
+      const stale = run.state !== 'CLOSED' && last && (L.nowS() - last) > L.RUN_STALE_S;
+      res.run = { id: run.run_id, state: stale ? 'STALE' : run.state, mode: run.mode || 'solo',
+        project_id: run.project_id || null, proposal_id: run.proposal_id || null,
+        client_id: run.client_id || null, journal_folder: (run.journal_folder && run.journal_folder.id) || null,
+        last_progress_at: last || null, blocks: L.blocksSpent(run), tree: run.tree || null };
+      if (stale || run.state === 'CLOSED') run = null;
+    }
+    for (const [id] of REGISTER) {
+      const a = L.gateArmed(id, run);
+      if (a.armed) res.gates.armed++; else res.gates.stood.push({ id, why: a.why });
+    }
+    if (session) {
+      const key = L.sessionKey({ session_id: session });
+      const st = fold(L.readFamily(key), run);
+      const open = [...st.obligations.values()];
+      res.owed = open.slice(0, 20).map((o) => ({ w: o.w, id: o.id || null, neg: Boolean(o.neg),
+        carried: Boolean(o.carried), read: (WRITE_READ_MAP[o.w] || [])[0] || null }));
+      res.owedTotal = open.length;
+      res.settle = settleCall(open);
+      const b = lastBoundary(st);
+      if (b) {
+        const folder = run && run.journal_folder && run.journal_folder.id;
+        const wrote = st.journalWrites.some((j) => j.t >= b.t && (!folder || j.folder === folder));
+        const read = st.journalReads.some((j) => j.t >= b.t);
+        res.journal = { boundary: b.boundary, id: b.id || null, status: b.status || null, wrote, read,
+          owed: !wrote || !read };
+      }
+      if (st.closeoutDebt) res.closeout = closeoutOwed(st).map((m) => m.id);
+    }
+    // The carried debt file, read without readDebt's expiry delete.
+    const d = L.readJSON(L.debtFile(L.projHash(cwd)));
+    if (d && d.at && (L.nowS() - d.at) <= L.DEBT_TTL_S) {
+      const rb = Array.isArray(d.rb) ? d.rb : [];
+      res.debt = { at: d.at, reads: rb.length, items: rb.slice(0, 8).map((o) => ({ w: o.w, id: o.id || null })),
+        settle: settleCall(rb), closeout: Array.isArray(d.co) ? d.co : [] };
+    }
+  } catch (e) { res.error = String(e && e.message).slice(0, 160); }
+  process.stdout.write(JSON.stringify(res) + '\n');
+  process.exit(0);
+}
+
 function cliTools() {
   process.stdout.write([...PORTAL_TOOLS].join('\n') + '\n');
   process.exit(0);
@@ -2459,6 +2588,7 @@ function main() {
     case 're-arm': case 'rearm': return cliReArm();
     case 'doctor': return cliDoctor();
     case 'tools': return cliTools();
+    case 'status': return cliStatusJson();
     case 'selftest': return require('./canon-selftest.js').run();
     default: break;
   }

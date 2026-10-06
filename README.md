@@ -89,8 +89,9 @@ Generate the key in the web app → **Settings → API Keys → Generate**.
 | `/rearm-watch` **command** | What a human types to join a channel and keep watching it, or to read the roster. |
 | `scripts/canon-gate.js` | The canon gates: `PreToolUse` refusals, `PostToolUse`/`Stop` compulsions, turn-end advisories, plus `stand-down`, `doctor` and `selftest` modes. |
 | `scripts/watch-alarm.js` | The ABSENT alarm and the turn-end gate. Node, no dependencies. |
+| **mod** (`hooks/mods/`) | Claude Code ≥ 2.1.287 only: status line, `/portal-cockpit`, gate band, result cards, Team Chat wake-up. Optional, read-mostly, never enforcement. |
 
-### What actually enforces — stated plainly, as of plugin 1.7.9
+### What actually enforces — stated plainly, as of plugin 1.8.0
 
 The canon gates ship and are wired into the plugin's hooks. Not every gate has the same evidence behind
 it, and it is worth knowing which is which:
@@ -106,7 +107,20 @@ it, and it is worth knowing which is which:
   [`management-portal/skills/management-portal/canon-gates.md`](management-portal/skills/management-portal/canon-gates.md);
   where this page and that board disagree, the board wins.
 
-### What's new in 1.7.9 (since 1.7.5)
+### What's new in 1.8.0
+
+- **Mods — optional extras for Claude Code ≥ 2.1.287.** A canon status line, a `/portal-cockpit` pane
+  (run, phases → milestones → tasks, owed read-backs, stood-down gates), a band above the prompt that
+  names what is owed and asks Claude to run the settling read, cards for portal results (with `raw`
+  always one press away) and a Team Chat wake-up. **Additive:** older Claude Code ignores them, no gate
+  moved, and nothing in the mod enforces anything. What it reads and writes is listed under *Mods* in
+  [`management-portal/README.md`](management-portal/README.md).
+- **A long listing can vouch for every id it returns.** A 156-connection `list_flow_connections`
+  (~470 uuids) could never settle the debt for the connection at its end; a read now matches the pending
+  ids against its full output.
+- **`canon-gate.js status --json`** — a read-only snapshot of the run, the gates and what is owed.
+
+### Earlier (1.7.6 – 1.7.9)
 
 - **1.7.8 — project knowledge graphs can be seeded with related earlier graphs and GitHub repos.** Both
   are new source kinds (`knowledge_graph`, `github_repo`), and the close-out gate now counts sources added

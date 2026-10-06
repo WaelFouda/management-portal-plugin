@@ -55,15 +55,15 @@ described in the plugin README as a gate. Combined with G4 — Pre/PostToolUse `
 being unproven on 2.1.231 — those two reminders may have been reaching nobody at all for their
 entire service life.
 
-**As of 1.5.0 that file is deleted.** `scripts/canon-gate.js` replaces it: 2496 lines as of 1.7.9, a real
+**As of 1.5.0 that file is deleted.** `scripts/canon-gate.js` replaces it: 2627 lines as of 1.8.0, a real
 `PreToolUse` `permissionDecision: "deny"`, wired into 8 of the 11 entries in `hooks/hooks.json`.
 **State the replacement precisely.** What is now true is that the engine **ships**. What is *not* yet
 true is that anyone has watched it refuse a live call on this merged build — its gates are
 **fixture-verified** (`scripts/canon-selftest.js` spawns the real binary under an isolated
-`PORTAL_CANON_HOME`; the suite **currently reports 438 assertions**, an emergent count partly driven
+`PORTAL_CANON_HOME`; the suite **currently reports 450 assertions**, an emergent count partly driven
 off `REGISTER`, so **never quote 321 as a constant**) and several were live-verified on the engine
 lane before the merge, over bytes identical to these. The one place that verdict lives is the status
-board in `plugin/skills/management-portal/canon-gates.md`. As of 1.7.9 it reads **ENFORCED** for three
+board in `plugin/skills/management-portal/canon-gates.md`. As of 1.8.0 it reads **ENFORCED** for three
 gates — `CANON-ID`, `CANON-READ-BACK` and `CANON-BOTTOM-UP`, observed refusing real calls on
 2026-08-16, and the first `CANON-ID` refusals were **false** — and **ARMED, not ENFORCED** for the rest.
 
@@ -181,6 +181,16 @@ must stay word-consistent between them.
   `CANON-FLOW-READ` and `CANON-STATUS-SYNC` close both. Neither can verify the CONTENT — a gate
   cannot know whether a task is really finished, and milestones and tasks share no key — so both
   enforce the honest thing instead: that the record was read before the claim was made.
+- **A long listing could never vouch for the id near its end — fixed in 1.8.0.** Measured 2026-10-06:
+  `list_flow_connections` returned 156 connections, each row carrying its own id and the two cluster ids
+  it joins — ~470 uuids. The gate kept at most 300 id fingerprints per read, and the 4 KB ledger line then
+  cut them to 150, so the just-created connection (`a60272c4-…`, the last marked row) never reached the
+  ledger and its `create_flow_connection` debt could not clear however often the printed read was run. A
+  read now matches every **pending** id directly against its **full** output and writes the ones it found
+  first, where no trim can reach them — memory is bounded by the number of pending ids, not by the length
+  of the listing. The same change makes a deleted id still present at the end of a long listing count as
+  present, so a delete is no longer "verified" because the id fell off the cap; and a bulk row that has to
+  be shortened now loses fingerprints before it loses its inner calls.
 - **A board built by a chained `bulk` latched three gates — fixed in 1.7.9.** Measured 2026-10-06:
   `bulk([create_board, create_board_block{board_id:"{{0.id}}"} ×28])` printed
   `list_board_blocks("<BLOCK id>")`, a read that takes a board id. The `READ_ARG_SOURCE` owner was the

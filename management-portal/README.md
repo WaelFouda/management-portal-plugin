@@ -32,7 +32,7 @@ key to create, paste or store. The plugin ships no `userConfig` prompt, and its 
 
 ---
 
-# The canon gates (1.7.9) — READ THE ESCAPE FIRST
+# The canon gates (1.8.0) — READ THE ESCAPE FIRST
 
 1.5.0 turns parts of the agent discipline from **reminders** into **hooks that refuse**. Before anything
 else, here is how to turn them off, because someone reading this section is usually reading it because
@@ -110,7 +110,7 @@ graph closure and final journal (`CANON-CLOSEOUT`).
 deny on the fourth single write cannot undo the first three), status discipline (`CANON-STATUS`), and
 completeness (`CANON-COMPLETE` — which names empty **fields** and never judges what is written in them).
 
-> ### ⚠️ Status, as of plugin 1.7.9 — three gates verified live, the rest armed
+> ### ⚠️ Status, as of plugin 1.8.0 — three gates verified live, the rest armed
 >
 > **The engine ships.** `scripts/canon-gate.js` is present, 2496 lines, emits a real `PreToolUse`
 > `permissionDecision: "deny"`, and `hooks/hooks.json` wires it into 8 of the 11 hook entries. The
@@ -127,7 +127,7 @@ completeness (`CANON-COMPLETE` — which names empty **fields** and never judges
 > parent's own uuid.
 >
 > **ARMED still is not ENFORCED for the rest**, and must not be written up as one. Everything not named
-> above is fixture-verified by `scripts/canon-selftest.js` (438 assertions) and has not been seen refusing
+> above is fixture-verified by `scripts/canon-selftest.js` (450 assertions) and has not been seen refusing
 > a live call. The status board in `skills/management-portal/canon-gates.md` remains the one place that
 > verdict lives; this box mirrors it and the two are required to agree.
 >
@@ -167,6 +167,16 @@ node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" selftest   # fixture payloads 
 
 ## Known failure modes — named, not hidden
 
+- **A long listing could never vouch for the id near its end — fixed in 1.8.0.** Measured 2026-10-06:
+  `list_flow_connections` returned 156 connections, each row carrying its own id and the two cluster ids
+  it joins — ~470 uuids. The gate kept at most 300 id fingerprints per read, and the 4 KB ledger line then
+  cut them to 150, so the just-created connection (`a60272c4-…`, the last marked row) never reached the
+  ledger and its `create_flow_connection` debt could not clear however often the printed read was run. A
+  read now matches every **pending** id directly against its **full** output and writes the ones it found
+  first, where no trim can reach them — memory is bounded by the number of pending ids, not by the length
+  of the listing. The same change makes a deleted id still present at the end of a long listing count as
+  present, so a delete is no longer "verified" because the id fell off the cap; and a bulk row that has to
+  be shortened now loses fingerprints before it loses its inner calls.
 - **A board built by a chained `bulk` latched three gates — fixed in 1.7.9.** Measured 2026-10-06,
   three times in one session: `bulk([create_board, create_board_block{board_id:"{{0.id}}"} ×28])` — the
   documented chaining — made the gate print `list_board_blocks("<BLOCK id>")`, a call that takes a board
@@ -312,8 +322,72 @@ stores that an entry happened and never a word of what it said.**
 | `team-chat-reachability` **skill** | Teaches how to stay reachable on a channel watch roster; the re-arm rule. |
 | `team-chat-watcher` **subagent** | The one you **spawn**: the background loop that performs the blocking `await_my_turn` wait. Spawning it is what actually makes you reachable. |
 | `/rearm-watch` **command** | What a **human types** to join a channel and keep watching it, or to read the roster by hand. |
+| **mod** (`hooks/mods/`, Claude Code ≥ 2.1.287) | Optional extras: the canon status line, `/portal-cockpit`, the gate band, result cards and the Team Chat wake-up. **Never enforcement** — see *Mods* below. |
 | `scripts/watch-alarm.js` | The ABSENT alarm and turn-end gate. Node, no dependencies. **Needs one manual step — below.** |
 | **watch recorder + preflight hooks** | PostToolUse records that this machine really waited; SessionStart says when the alarm is not armed. |
+
+## Mods — optional extras (1.8.0, Claude Code ≥ 2.1.287)
+
+1.8.0 adds a **mod**: a function-hooks module (`hooks/mods/register.tsx`, listed under `modules` in
+`hooks/hooks.json`) that Claude Code **2.1.287 or newer** loads in-process (2.1.286 in the Desktop app's
+Code tab). Mods are early access in Claude Code and the API may change between releases.
+
+**Everything here is additive.** An older Claude Code ignores the `modules` key (and the manifest's
+`types` field — `claude plugin validate` on 2.1.233 reports it as an unknown field it ignores) and runs
+the plugin exactly as 1.7.x did. **No gate moved.** Every refusal and block still lives in the command
+hooks (`canon-gate.js`, `watch-alarm.js`); a mod hook that throws fails *open*, so the mod is never relied
+on to enforce anything. It observes tool calls through `classic.PostToolUse` *after* the command hooks
+have answered — it never sits in the path that decides a call.
+
+| What | Where you see it | What it does |
+|---|---|---|
+| **Canon status line** | under the prompt | `canon <run> <state> · gates N/15 armed (k stood down) · owes n read-backs` — refreshed every 10 s and after each portal call. |
+| **`/portal-cockpit`** | a pane | The active run, its tree counts, armed vs stood-down gates (with why), what is owed now and the call that settles it, the proposal's phases → milestones with progress, and the project's tasks. Buttons: Refresh, Cards on/off, Chat wake on/off, Close. Subcommands: `/portal-cockpit rich|band|watch on|off`, `/portal-cockpit watch <channel_id> <agent>`, `/portal-cockpit unwatch`. |
+| **Gate band** | above the prompt, only while something is owed | Names the owed read-backs (or a journal entry owed since the last phase boundary) and the settling call. Its button **submits a prompt asking Claude to run that read** — the mod never runs it itself, because a mod-made MCP call is not a model tool call and could not settle a gate. |
+| **Result cards** | in the transcript | Portal results (`list_tasks`, `list_subtasks`, `get_proposal_detail`, `list_milestones`, flow listings, `read_channel_messages`, `bulk`, generic `Found N …` listings) drawn as a compact card/table; **`raw`** on any card shows the engine's own row. Anything the mod cannot parse is drawn exactly as before. |
+| **Team Chat wake-up** | toast + a new turn | Once this session calls `start_watching_channel`/`await_my_turn` (or you run `/portal-cockpit watch …`), a timer reads that channel every 45 s; when a **new** message `@`-addresses this agent (or `@all`), it toasts and submits a prompt telling Claude to read the policy and the messages and answer. |
+
+**The Team Chat wake-up does not replace the `team-chat-watcher` subagent.** It is a latency aid inside an
+open interactive session. It does **not** perform `await_my_turn`, so the server roster does not count it
+as watching, and the ABSENT turn-end gate is unchanged. Keep using the watcher subagent (and `/rearm-watch`)
+as the skill describes; the wake-up only shortens the gap when a message arrives while you are idle. It
+never relays a message's text into the prompt — only the message id, the sender's name (reduced to a safe
+label) and the channel id — and its reads carry no `as_agent`, so a poll never consumes this agent's first
+delivery of the channel policy.
+
+**Which portal server it talks to is discovered, never hard-coded:** the plugin's own server, a claude.ai
+connector and a raw MCP install all register the same tools under different names. The mod connects the
+plugin's own server if it is signed in, then looks for any server exposing the portal's signature tools
+(`get_proposal_detail`, `list_flow_connections`, `await_my_turn`) in the session's tool list and, when tool
+search defers them, in the context breakdown. With no signed-in portal server the cockpit says so; the
+canon half still works, because it reads only local files.
+
+### Privacy — exactly what the mod reads and writes
+
+- **Reads, local:** the canon snapshot from `node scripts/canon-gate.js status --json` — a **read-only**
+  mode added in 1.8.0 that reuses the gate's own fold over the same ledger the hooks write; it never
+  appends, never closes a stale run and never deletes an expired debt. Plus `CLAUDE_CONFIG_DIR`,
+  `USERPROFILE` or `HOME` to find the plugin's data folder.
+- **Reads, portal (READS ONLY):** `get_proposal_detail` and `list_tasks` for the run's project when you
+  open or refresh the cockpit; `read_channel_messages` for the one watched channel while the wake-up is on.
+  It calls no other portal tool and **never writes to the portal**.
+- **Writes:** only its own session values (`$.state`) and its own `$.store` entries — the three toggles,
+  the watched channel and agent name, and up to 200 seen message ids. It writes nothing to the canon data
+  folder and nothing to the project.
+
+### Turning it off
+
+`/portal-cockpit rich off`, `/portal-cockpit band off` and `/portal-cockpit watch off` turn the parts off
+and are remembered across sessions. To drop the mod entirely, disable the plugin or run an older Claude
+Code; the gates are unaffected either way.
+
+### Verifying it
+
+```bash
+claude plugin validate <plugin dir>     # what the module hooks and calls, as the engine reads it
+claude plugin test <plugin dir>         # hooks/mods/tests/*.test.ts against the real engine, terminal + desktop
+node scripts/canon-gate.js selftest     # the gates, unchanged in behaviour and still fully green
+```
 
 ## Install and sign in
 
@@ -537,7 +611,7 @@ remember.
 > ```
 >
 > Then **reload** (`/reload-plugins`) or restart Claude Code, and **verify before you trust it**: run
-> `/plugin` and confirm the installed version reads **1.7.9**. If it does not, you are running older code
+> `/plugin` and confirm the installed version reads **1.8.0**. If it does not, you are running older code
 > no matter what the repository says.
 >
 > **This is per machine.** A bump reaches nobody until each machine updates.
