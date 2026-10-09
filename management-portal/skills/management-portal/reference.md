@@ -164,14 +164,17 @@ and for the status board that says whether a gate is actually live yet.
 - **(d) Journals** — `create_journal_folder(name:"<project> — run log")` once, then after **every
   phase** `create_journal(folder_id, title, body, tags, logged_at)` with lessons learnt and anything
   that must be returned to — **and always read it back** with `get_journal` / `list_journals` /
-  `search_journals`. Write **and** read-back; the gate checks for both halves.
+  `search_journals`. Write **and** read-back; the gate checks for both halves. Each phase entry carries
+  a **"What the graph showed"** section (`CANON-JOURNAL-GRAPH`).
 - **(e) Knowledge graph** — `create_knowledge_graph(name)` →
   `add_source_to_knowledge_graph(...)` spanning **the journal folder, notes, boards, tags, the project
   and its tasks** (plus related earlier graphs and the project's GitHub repos, where they exist) →
   `extract_knowledge_graph` (the cheap incremental path) →
   `interpret_knowledge_graph` → **read it back** with `get_knowledge_graph` /
   `semantic_search_knowledge_graph`. **Never `regenerate_knowledge_graph` to refresh** — it destroys
-  the existing nodes and edges first.
+  the existing nodes and edges first. **The graph is read per phase, not only at close-out:** consult it
+  at run start and at each phase start (`CANON-KG-CONSULT`), `extract_` + `interpret_` it each phase,
+  and turn its gaps into tasks or a journal "won't fix" line — the loop is spelled out in §2b (e).
 - **(f) Efficiency** — the portal has a **`bulk`** tool. Use it instead of N single calls:
   `bulk(calls:[{tool:"create_task",args:{…}}, …], stop_on_error:false)`. A write and its verifying
   read can go in the **same** bulk. Read the per-item results — `[i] FAILED — …` marks the ones that
@@ -247,16 +250,21 @@ As each unit completes: `complete_task(subtask)` → re-`list_subtasks(parent)` 
 `update_proposal_phase(status:"completed")`. **Verify:** `get_proposal_detail` — a milestone whose tasks
 are all complete but whose status still reads otherwise is the exact thing the advisory reports.
 
-**(d) JOURNALS** — *(gate: `CANON-JOURNAL-PHASE`, which requires the write **and** the read-back)*
+**(d) JOURNALS** — *(gates: `CANON-JOURNAL-PHASE`, which requires the write **and** the read-back;
+`CANON-JOURNAL-GRAPH`, which requires the "What the graph showed" section)*
 
 Once per run: `create_journal_folder(name:"<project> — run log")`. After **every** phase:
 `create_journal(folder_id, title, body, tags, logged_at)` capturing lessons learnt and anything that must
 be returned to → **then read it back**: `get_journal` / `list_journals(folder_id)` /
 `search_journals`. The read-back is not ceremony — it is half the rule, and the gate checks for both
-halves separately. Pass `logged_at` explicitly when the entry is about an earlier day.
+halves separately. Pass `logged_at` explicitly when the entry is about an earlier day. The entry carries
+a **"What the graph showed"** section — a heading or line with that phrase, or a line opening `graph:` —
+recording what consulting the graph showed before the phase's decisions. The gate checks only that the
+section exists; `update_journal` on the entry already written always clears it.
 
-**(e) KNOWLEDGE GRAPH** — *(gate: `CANON-KG-DESTRUCTIVE` guards the destructive path;
-`CANON-CLOSEOUT` requires the closure)*
+**(e) KNOWLEDGE GRAPH** — *(gates: `CANON-KG-CONSULT` requires a consult before implementation and
+after each phase boundary; `CANON-KG-DESTRUCTIVE` guards the destructive path; `CANON-CLOSEOUT`
+requires the closure; `CANON-KG-LEARN` and `CANON-KG-GAPS` advise at turn end)*
 
 `create_knowledge_graph(name)` → `add_source_to_knowledge_graph` for **each** source kind — the run's
 journal folder, notes, boards, tags, the project, and tasks, plus when applicable related earlier graphs
@@ -268,11 +276,32 @@ id:"owner/repo"}`, via `list_my_github_repos`); a graph never sources itself →
 is the incremental path and is what you want in almost every case. Treat any edge below 0.6 confidence as
 a hypothesis, never as established fact.
 
+**The per-phase graph loop — a graph is built to be READ.** Building it is not enough; consult it before
+you decide:
+
+1. **At run start and at each phase start, consult it** before the first implementation work or portal
+   write: `semantic_search_knowledge_graph(graph_id, query:"<the decision this phase is about to take>")`,
+   `interpret_knowledge_graph(graph_id, focus:"…")` (an unfocused interpret does not count), or
+   `get_knowledge_graph`. No graph for the project yet? `list_knowledge_graphs(search:"<project>")`
+   coming back empty counts — then `create_knowledge_graph`.
+2. **Each phase, feed it and ask it:** `extract_knowledge_graph` → `interpret_knowledge_graph(focus:"<what
+   the next phase must decide>")`.
+3. **Journal it** under "What the graph showed" (canon (d)), then read the journal back.
+4. **Gaps become work:** every "NO edge between them" candidate connection and every isolated node the
+   interpretation reports becomes a `create_task`/`create_subtask`, or a journal line saying why it
+   **won't fix**.
+
+So the order at a phase boundary is: consult (+ extract + interpret) → journal with "What the graph
+showed" + read it back → `list_flow_clusters` + `list_flow_connections` → continue. Consults inside a
+`bulk` count, and a consult the parent made is credited on the run, so sub-agents inherit it.
+
 **(f) EFFICIENCY — use `bulk`** — *(gate: `CANON-BULK`, advisory by design)*
 
 `bulk({calls:[{tool, args}, …], stop_on_error})` rather than N single calls. It is one round trip and one
 result block, and the hook ledger expands it, so a write and its verifying read **inside the same bulk**
-satisfy read-after-write in one call. This is reported and never refused: a refusal on the fourth single
+satisfy read-after-write in one call. Since 1.9.0 every gate-clearing read inside a bulk counts — for
+`CANON-ID`, `CANON-BOTTOM-UP`, `CANON-FLOW-READ`, `CANON-KG-CONSULT` and the journal gates — so there is no
+need to keep those reads direct. This is reported and never refused: a refusal on the fourth single
 call cannot undo the first three, and single calls are sometimes right.
 
 **(g) TEAM CHAT — COORDINATOR** — *(gate: `CANON-COORD-ROLE`)*

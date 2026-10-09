@@ -251,6 +251,16 @@ function append(key, obj) {
       // `inner` drops the very row the fold replays to discharge anything at all. Measured:
       // a bulk carrying one 156-connection listing lost its `inner` here and settled nothing.
       if (line.length > 4000 && Array.isArray(obj.idh) && obj.idh.length > 150) { obj.idh = obj.idh.slice(0, 150); line = JSON.stringify(obj); }
+      // `rd` (the reads and journal facts a bulk carried — see canon-gate modePost) is what
+      // makes a read inside a long bulk count at all once `inner` is cut, so it is shrunk
+      // rather than dropped: listed children fall back to 8-char heads, which CANON-BOTTOM-UP
+      // matches against the full ids it completes.
+      if (line.length > 4000 && Array.isArray(obj.rd)) {
+        obj.rd = obj.rd.map((e) => (Array.isArray(e.k)
+          ? Object.assign({}, e, { k: e.k.map((x) => (/^h:/.test(String(x)) ? String(x) : 'h:' + String(x).slice(0, 8))) })
+          : e));
+        line = JSON.stringify(obj);
+      }
       // `inner` is dropped LAST and only when nothing else will fit, because each inner row
       // is a call whose ids can discharge an obligation. When it does go, the coarse
       // top-level `ids` still carries the harvest — which is why that field exists.
@@ -261,10 +271,12 @@ function append(key, obj) {
       if (line.length > 4000 && Array.isArray(obj.idh)) { obj.idh = obj.idh.slice(0, 150); line = JSON.stringify(obj); }
       if (line.length > 4000) {
         // Last resort: a minimal row that still carries what the fold reads.
-        line = JSON.stringify({
+        line = JSON.stringify(Object.assign({
           v: obj.v, t: obj.t, k: obj.k, s: obj.s, a: obj.a, tool: obj.tool, ok: obj.ok,
           ids: trimIds(obj.ids, 16), idh: (obj.idh || []).slice(0, 150), trunc: 1,
-        });
+        }, Array.isArray(obj.rd) ? { rd: obj.rd.slice(0, 30) } : {},
+        // The one-call facts the KG gates read; a few bytes each, never content.
+        obj.kgn ? { kgn: 1 } : {}, obj.kgap ? { kgap: obj.kgap } : {}));
       }
     }
     fs.appendFileSync(sessionFile(key), line + '\n', 'utf8');
@@ -886,7 +898,61 @@ function safeArgs(toolInput) {
   }
   const kinds = sourceKinds(toolInput);
   if (kinds.length) out.item_types = kinds;
+  // DERIVED BOOLEANS, NEVER WORDS. CANON-JOURNAL-GRAPH needs to know THAT a journal entry
+  // carries a "What the graph showed" section, and the gaps advisory THAT it carries a
+  // "won't fix" line; CANON-KG-CONSULT needs to know THAT an interpretation was asked a
+  // focused question. None of them may keep what was written — the allow-list above drops
+  // `content` and `focus` on purpose — so only the structural fact survives, as a 1.
+  const jf = journalFlags(toolInput.content);
+  if (jf.graph_section) out.graph_section = 1;
+  if (jf.wont_fix) out.wont_fix = 1;
+  if (typeof toolInput.focus === 'string' && toolInput.focus.trim()) out.focused = 1;
   return out;
+}
+
+/**
+ * The STRUCTURE of a journal body, as two booleans — never a word of it.
+ *
+ * `graph_section`: a heading or line containing "What the graph showed", or a line that
+ * opens with `graph:` (plain text or the first thing inside an HTML element). This is the
+ * per-phase learning CANON-JOURNAL-GRAPH asks for: what consulting the knowledge graph
+ * actually showed before this phase's decisions. It is a STRUCTURE check — a gate cannot
+ * tell whether the section is any good, and does not try.
+ *
+ * `wont_fix`: a "won't fix" line, the documented way to close an interpretation's gaps
+ * without filing a task for them (see CANON-KG-GAPS).
+ */
+function journalFlags(content) {
+  const out = { graph_section: false, wont_fix: false };
+  if (typeof content !== 'string' || !content) return out;
+  const s = content.length > RESP_SCAN_CAP ? content.slice(0, RESP_SCAN_CAP) : content;
+  if (/what\s+the\s+(knowledge\s+)?graph\s+showed/i.test(s)
+      || /(^|\n|>)\s*(?:[-*#]+\s*)?(?:<[^>]+>\s*)*graph\s*:/i.test(s)) out.graph_section = true;
+  if (/won['’]?t[\s-]+fix/i.test(s)) out.wont_fix = true;
+  return out;
+}
+
+/**
+ * How many GAPS an interpret_knowledge_graph answer reports: candidate surprising
+ * connections (semantically close, different communities, NO edge between them) plus
+ * isolated nodes. Read from the computed fact sheet the backend always returns
+ * (knowledge_graph_tools.py — "CANDIDATE SURPRISING CONNECTIONS", "ISOLATED NODES (N)"), so
+ * it is a count of facts the portal computed, not of anything a model wrote.
+ */
+function kgGaps(text) {
+  if (!text) return 0;
+  const s = String(text).length > BULK_SCAN_CAP ? String(text).slice(0, BULK_SCAN_CAP) : String(text);
+  let n = 0;
+  const sec = s.match(/CANDIDATE SURPRISING CONNECTIONS[^\n]*\n([\s\S]*?)(?:\n\s*\n|\nISOLATED NODES|$)/);
+  if (sec) n += (sec[1].match(/NO edge between them/gi) || []).length;
+  const iso = s.match(/ISOLATED NODES\s*\((\d+)\)/);
+  if (iso) n += Number(iso[1]) || 0;
+  return n;
+}
+
+/** Did a list/search of knowledge graphs come back EMPTY? The two backend phrasings. */
+function kgNone(text) {
+  return /^\s*No (knowledge graphs|matches for)/i.test(String(text || ''));
 }
 
 /**
@@ -939,7 +1005,20 @@ function bareToolName(raw) {
 // bulk expansion (§4.4) — mandatory, because canon (f) blinds Gate 1 without it
 // ---------------------------------------------------------------------------
 
-const RE_BULK_ITEM = /^\[(\d+)\]\s+(?:([A-Za-z0-9_]+):\s*)?([\s\S]*?)$/gm;
+/**
+ * An item header in a bulk response: `[N] tool: …`, `[N] FAILED — …`, `[N] SKIPPED — …`.
+ *
+ * WAS a single `^\[(\d+)\]…([\s\S]*?)$` match under /m, which ends at the FIRST line break —
+ * so an item's text was its first line and nothing more. Every write reports its id on that
+ * line, which is why it held for so long; every READ reports its rows on the lines after it.
+ * MEASURED 2026-10-09: bulk([list_subtasks(P)]) answered "Found 2 subtask(s) for task P:"
+ * on line one and the two children below it, the fold recorded P as having NO children, and
+ * complete_task(P) was ALLOWED over a pending child — CANON-BOTTOM-UP inverted, inside the
+ * batch the canon tells the agent to use. An item now runs to the next header.
+ */
+const RE_BULK_HEAD = /^\[(\d+)\]\s+/gm;
+/** A bulk can outgrow the 64 KB id-harvest window; its ITEMS are split over this much. */
+const BULK_SCAN_CAP = 4 * 1024 * 1024;
 
 /**
  * The TEXT of a tool_response, with its line breaks intact.
@@ -995,21 +1074,118 @@ function parseBulkResponse(text, inputCalls) {
   // reports no inner calls is indistinguishable from a bulk that did nothing, which is
   // why this failed silently for so long.
   if (s.indexOf('\n') === -1 && s.indexOf('\\n') !== -1) s = s.replace(/\\r\\n|\\n/g, '\n');
-  const body = s.length > RESP_SCAN_CAP ? s.slice(0, RESP_SCAN_CAP) : s;
+  const body = s.length > BULK_SCAN_CAP ? s.slice(0, BULK_SCAN_CAP) : s;
+  // HEADERS ARE CONSECUTIVE. _handle_bulk appends exactly one line per call, in order, until
+  // it stops — so item N+1's header is the only `[N+1]` that can follow item N's. Accepting
+  // nothing else is what keeps a row of somebody's note that happens to start "[3] " from
+  // splitting an item in two. When the call's tool is known, a header naming a DIFFERENT
+  // tool is content, not a header.
+  const calls = Array.isArray(inputCalls) ? inputCalls : [];
+  const heads = [];
   let m;
-  RE_BULK_ITEM.lastIndex = 0;
-  while ((m = RE_BULK_ITEM.exec(body))) {
+  let next = 0;
+  RE_BULK_HEAD.lastIndex = 0;
+  while ((m = RE_BULK_HEAD.exec(body))) {
     const i = Number(m[1]);
-    let tool = m[2] || null;
-    const itemText = m[3] || '';
-    if (!tool && Array.isArray(inputCalls) && inputCalls[i]) {
-      const c = inputCalls[i];
-      tool = (c && (c.tool || c.name)) || null;
-    }
-    const ok = !/^\s*(?:FAILED|SKIPPED)\s+[—-]/.test(itemText);
-    out.push({ i, tool: tool || null, ok, ids: ok ? harvestSeen(itemText) : [] });
+    if (i !== next) continue;
+    const after = m.index + m[0].length;
+    const rest = body.slice(after, after + 80);
+    const named = rest.match(/^([A-Za-z0-9_]+):/);
+    const want = calls[i] && (calls[i].tool || calls[i].name);
+    // _handle_bulk writes `[N] <tool>: …` for every call that reached a tool, and
+    // `[N] FAILED —` / `[N] SKIPPED —` for one that did not. Nothing else is a header.
+    if (want && !((named && named[1] === want) || /^(FAILED|SKIPPED)\b/.test(rest))) continue;
+    heads.push({ i, start: m.index, after });
+    next = i + 1;
+  }
+  for (let k = 0; k < heads.length; k++) {
+    const h = heads[k];
+    let text = body.slice(h.after, k + 1 < heads.length ? heads[k + 1].start : body.length).replace(/\s+$/, '');
+    let tool = null;
+    const tm = text.match(/^([A-Za-z0-9_]+):\s*/);
+    if (tm && !/^(FAILED|SKIPPED)$/.test(tm[1])) { tool = tm[1]; text = text.slice(tm[0].length); }
+    if (!tool && calls[h.i]) tool = (calls[h.i] && (calls[h.i].tool || calls[h.i].name)) || null;
+    const ok = !/^\s*(?:FAILED|SKIPPED)\s+[—-]/.test(text);
+    // `ids` stays the FIRST LINE's harvest, exactly as before: that is where every write
+    // reports the id it made, and it keeps a bulk row the size it always was. The rows of a
+    // listing travel in `text`, which the caller reduces to what the gates need (see `rd`
+    // in canon-gate modePost) and never writes to the ledger whole.
+    const first = text.split('\n', 1)[0];
+    out.push({ i: h.i, tool: tool || null, ok, ids: ok ? harvestSeen(first) : [], text });
   }
   return out;
+}
+
+/**
+ * CLAUDE CODE'S OVERFLOW STUB, resolved back into the response it replaced.
+ *
+ * MEASURED: a tool result over the runtime's token ceiling never reaches PostToolUse as the
+ * result. The hook is handed a ~600-byte stub instead —
+ *   Error: result (62,345 characters across 210 lines) exceeds maximum allowed tokens.
+ *   Output has been saved to C:\…\tool-results\mcp-…-list_flow_clusters-1789….txt.
+ *   Format: Plain text …
+ * — so the one listing that proves a write persisted is the one listing the gate never sees.
+ * The real case: list_flow_clusters returned 62 KB, the owed cluster
+ * ea291000-50de-4050-8e01-5f9e65ebb9a2 was in it, and the debt stood after an honest read.
+ *
+ * Read the saved file instead, bounded (OVERFLOW_READ_CAP) and only when the response IS the
+ * stub — it must open the text, and the path must sit in a `tool-results` folder, which is
+ * where the runtime writes them. Anything else returns null and the caller keeps the text it
+ * was given. A JSON file (content blocks) is reduced through responseText like any response.
+ */
+const OVERFLOW_READ_CAP = 4 * 1024 * 1024;
+const RE_OVERFLOW = /^\s*(?:Error:\s*)?result\s*\([\d,.\s]*characters[^)]*\)\s*exceeds maximum allowed tokens\.\s*Output has been saved to\s+(.+?\.(?:txt|json|md|log))\.?(?:\r?\n|\s*$)/i;
+
+function overflowText(text) {
+  try {
+    const s = String(text || '');
+    if (!s || s.length > 8192) return null;
+    const m = s.match(RE_OVERFLOW);
+    if (!m) return null;
+    const file = m[1].trim().replace(/^["']|["']$/g, '');
+    if (!/[\\/]tool-results[\\/]/i.test(file)) return null;
+    let st;
+    try { st = fs.statSync(file); } catch (_) { return null; }
+    if (!st.isFile()) return null;
+    const len = Math.min(st.size, OVERFLOW_READ_CAP);
+    const buf = Buffer.alloc(len);
+    const fd = fs.openSync(file, 'r');
+    try { fs.readSync(fd, buf, 0, len, 0); } finally { fs.closeSync(fd); }
+    let body = buf.toString('utf8');
+    const t = body.trimStart();
+    if (t[0] === '[' || t[0] === '{') {
+      try { body = responseText(JSON.parse(body)) || body; } catch (_) { /* truncated JSON: scan it as text */ }
+    }
+    return { text: body, path: file, bytes: st.size };
+  } catch (_) { return null; }
+}
+
+/**
+ * EVERY id a portal response carries, in full — for the SEEN set only, and only overflow.
+ *
+ * MEASURED 2026-10-09: list_tasks returned 120 rows and update_task on row 60 was REFUSED by
+ * CANON-ID for an id the portal had just listed — direct and inside a bulk alike. harvestSeen
+ * keeps 40 marked + 20 wide ids so a row fits the 4 KB ledger line, and the middle of a long
+ * listing is exactly what that drops. The heads (harvestIdHeads) cannot stand in: a prefix
+ * must never vouch for an id CANON-ID is about to trust. So the full ids go into their own
+ * `seen` rows, chunked to fit the line, and only for PORTAL tool results — the same
+ * provenance rule as ever, with no cap on the listing's length below this one.
+ */
+const SEEN_ALL_CAP = 1200;
+function harvestAllIds(text) {
+  if (!text) return [];
+  const body = String(text).length > BULK_SCAN_CAP ? String(text).slice(0, BULK_SCAN_CAP) : String(text);
+  const out = new Set();
+  let m;
+  RE_UUID_G.lastIndex = 0;
+  while ((m = RE_UUID_G.exec(body)) && out.size < SEEN_ALL_CAP) out.add(m[0].toLowerCase());
+  const blob = [...out].join(' ');
+  RE_PREFIX_HEX_G.lastIndex = 0;
+  while ((m = RE_PREFIX_HEX_G.exec(body)) && out.size < SEEN_ALL_CAP) {
+    const v = m[0].toLowerCase();
+    if (!blob.includes(v)) out.add(v);
+  }
+  return [...out];
 }
 
 function bulkInnerNames(toolInput) {
@@ -1320,7 +1496,8 @@ module.exports = {
   sessionKey, sessionFile, append, readLines, readFamily,
   harvestSeen, harvestArgIds, harvestIdHeads, headsVouchFor, trimIds, idShape, safeArgs, sourceKinds, bareToolName,
   shellStrings, shellSegments, shellMutation, shellWriteTargets, redirectTargets, argWriteTargets, writeTargets,
-  parseBulkResponse, bulkInnerNames, responseText,
+  parseBulkResponse, bulkInnerNames, responseText, overflowText, harvestAllIds,
+  journalFlags, kgGaps, kgNone, BULK_SCAN_CAP,
   sentinel, canonMode, gateArmed,
   resolveRun, saveRun, openRun, closeRun, spendBlock, blocksSpent, creditProgress, creditTree, runFile, pointerFile,
   debtFile, readDebt, writeDebt, clearDebt,

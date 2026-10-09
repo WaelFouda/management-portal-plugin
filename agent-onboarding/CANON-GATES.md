@@ -55,15 +55,15 @@ described in the plugin README as a gate. Combined with G4 — Pre/PostToolUse `
 being unproven on 2.1.231 — those two reminders may have been reaching nobody at all for their
 entire service life.
 
-**As of 1.5.0 that file is deleted.** `scripts/canon-gate.js` replaces it: 2627 lines as of 1.8.0, a real
+**As of 1.5.0 that file is deleted.** `scripts/canon-gate.js` replaces it: 3077 lines as of 1.9.0, a real
 `PreToolUse` `permissionDecision: "deny"`, wired into 8 of the 11 entries in `hooks/hooks.json`.
 **State the replacement precisely.** What is now true is that the engine **ships**. What is *not* yet
 true is that anyone has watched it refuse a live call on this merged build — its gates are
 **fixture-verified** (`scripts/canon-selftest.js` spawns the real binary under an isolated
-`PORTAL_CANON_HOME`; the suite **currently reports 450 assertions**, an emergent count partly driven
+`PORTAL_CANON_HOME`; the suite **currently reports 530 assertions**, an emergent count partly driven
 off `REGISTER`, so **never quote 321 as a constant**) and several were live-verified on the engine
 lane before the merge, over bytes identical to these. The one place that verdict lives is the status
-board in `plugin/skills/management-portal/canon-gates.md`. As of 1.8.0 it reads **ENFORCED** for three
+board in `plugin/skills/management-portal/canon-gates.md`. As of 1.9.0 it reads **ENFORCED** for three
 gates — `CANON-ID`, `CANON-READ-BACK` and `CANON-BOTTOM-UP`, observed refusing real calls on
 2026-08-16, and the first `CANON-ID` refusals were **false** — and **ARMED, not ENFORCED** for the rest.
 
@@ -181,6 +181,43 @@ must stay word-consistent between them.
   `CANON-FLOW-READ` and `CANON-STATUS-SYNC` close both. Neither can verify the CONTENT — a gate
   cannot know whether a task is really finished, and milestones and tasks share no key — so both
   enforce the honest thing instead: that the record was read before the claim was made.
+- **The knowledge graphs were write-only — fixed in 1.9.0, and the owner caught it.** The gates made an
+  agent WRITE graphs (create, add sources, extract) and only at close-out demanded one interpret and one
+  read, after the last decision had been taken. Nothing made an agent CONSULT a graph before deciding, per
+  phase, while the journal and the flow board were gated per phase. Two blocking gates close it.
+  `CANON-KG-CONSULT`, in a run in state RUN, refuses the first implementation work (a project source write
+  by `CANON-TREE-FIRST`'s detection, or a mutating command naming no target outside the project) and the
+  first portal write after each phase boundary, until a graph has been consulted since that boundary (or
+  since the run began): `semantic_search_knowledge_graph`, `interpret_knowledge_graph` with a `focus`, or
+  `get_knowledge_graph`, on the run's own graph (`kg_ids`) or on any graph while the run has none; with no
+  graph for the project, an empty `list_knowledge_graphs`/`search_knowledge_graphs` counts and
+  `create_knowledge_graph` is never refused. The consult is also credited on the run (`kg_consult_at`) so
+  sub-agents and restarted sessions inherit it; budget 3 refusals per obligation, because its clearing
+  read depends on a record that can vanish. `CANON-JOURNAL-GRAPH` refuses the first portal write after a
+  boundary until a journal entry written since carries a "What the graph showed" section (a line with that
+  phrase, or one opening `graph:`) — the ledger stores a boolean, never the words. Neither refuses reads,
+  journal writes or the KG learning calls (`interpret_`, `extract_`, `add_source_to_`,
+  `create_knowledge_graph`), and `CANON-JOURNAL-PHASE`/`CANON-FLOW-READ` stopped refusing those learning
+  calls too — interpret is classed as a portal write and was refused while the new gate demanded it. Two
+  turn-end advisories sit beside `CANON-STATUS`/`CANON-BULK`/`CANON-COMPLETE`: `CANON-KG-LEARN` (a
+  boundary crossed this turn without both extract and interpret since the previous one) and
+  `CANON-KG-GAPS` (an interpretation's "NO edge between them" connections and "ISOLATED NODES (N)" not
+  turned into a task or a journal "won't fix" line after a boundary has passed).
+- **Reads inside `bulk` were partly invisible, a long listing's middle could not vouch for an id, and an
+  oversized result was never seen — fixed in 1.9.0.** Measured 2026-10-09 by a probe, now
+  regression-tested. A bulk item's text was only its first line, so `list_subtasks` children were never
+  attributed and `complete_task` on a parent with a pending child was **allowed** — `CANON-BOTTOM-UP`
+  inverted; reads past inner item 20 were dropped, so `CANON-FLOW-READ` refused honest work; and a long
+  bulk's stripped inner args lost `list_subtasks`' parent, so `CANON-BOTTOM-UP` refused honest work. Items
+  now run to the next header, and each bulk row carries a compact `rd` summary (reads, listed children,
+  journal flags, KG facts) that survives every ledger trim — **reads inside a bulk now count** for
+  `CANON-ID`, `CANON-BOTTOM-UP`, `CANON-FLOW-READ`, `CANON-KG-CONSULT` and `CANON-JOURNAL-PHASE`/`-GRAPH`,
+  superseding the old advice to keep gate-clearing reads direct. `CANON-ID` refused row 60 of a 120-row
+  `list_tasks` because a response kept ~60 ids; every id a portal response carries is now recorded in full
+  (`seen` rows). And past Claude Code's token ceiling PostToolUse receives a stub ("… exceeds maximum
+  allowed tokens. Output has been saved to `<path>`"); the gate now reads that file — bounded to 4 MB, only
+  from a `tool-results` folder. The real case: a 62 KB `list_flow_clusters` held the owed cluster
+  `ea291000-50de-4050-8e01-5f9e65ebb9a2`, which could never settle.
 - **A long listing could never vouch for the id near its end — fixed in 1.8.0.** Measured 2026-10-06:
   `list_flow_connections` returned 156 connections, each row carrying its own id and the two cluster ids
   it joins — ~470 uuids. The gate kept at most 300 id fingerprints per read, and the 4 KB ledger line then

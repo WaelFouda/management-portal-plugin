@@ -557,6 +557,37 @@ const DEBT_BUDGET = 3;
 const OTHER_GATE_KEYS = new Set(['create_journal', 'update_journal', 'create_journal_folder',
   'transfer_coordinator_title']);
 
+/**
+ * THE GRAPHS WERE WRITE-ONLY. REPORTED BY THE OWNER, 2026-10-09, and the record agreed.
+ *
+ * Every gate here made an agent BUILD knowledge graphs — create, attach sources, extract —
+ * and the only demand that one be READ came at close-out: one interpret and one read, after
+ * the last decision had already been taken (closeoutMissing). Nothing asked an agent to
+ * consult a graph before deciding, per phase, or to act on what an interpretation said. So
+ * agents dutifully fed graphs that nobody consulted, and learnt nothing from them. The journal
+ * and the flow board, by contrast, are re-read at every phase (CANON-JOURNAL-PHASE,
+ * CANON-FLOW-READ). The graph now is too — see CANON-KG-CONSULT and CANON-JOURNAL-GRAPH.
+ *
+ * KG_CONSULT_READS are the three calls that CONSULT a graph's content. interpret counts only
+ * when it was asked a focused question (`focus`), because an unfocused interpretation is a
+ * summary of the graph, not a question put to it about the decision at hand.
+ */
+const KG_CONSULT_READS = new Set(['semantic_search_knowledge_graph', 'interpret_knowledge_graph', 'get_knowledge_graph']);
+/** Listings that, when they come back EMPTY, prove there is no graph to consult. */
+const KG_LISTS = new Set(['list_knowledge_graphs', 'search_knowledge_graphs']);
+
+/**
+ * The KG writes the per-phase learning loop is made of — and therefore calls no phase gate
+ * may refuse. interpret_knowledge_graph is classed as a portal WRITE (its verb is in
+ * WRITE_PREFIX), so without this set CANON-JOURNAL-PHASE and CANON-FLOW-READ refused the very
+ * interpretation CANON-KG-CONSULT asks for, and CANON-KG-CONSULT refused the
+ * create_knowledge_graph its own reason names when no graph exists. Two gates each waiting on
+ * a call the other forbids is the latch shape this file has paid for seven times; the key is
+ * data again, REGISTER publishes it, and canon-selftest.js turns it.
+ */
+const KG_LEARNING = new Set(['interpret_knowledge_graph', 'extract_knowledge_graph',
+  'add_source_to_knowledge_graph', 'create_knowledge_graph']);
+
 // THE BASH_MUTATING REGEX THAT USED TO LIVE HERE IS GONE, and its replacement is
 // canon-lib.js shellMutation(). It read:
 //
@@ -608,6 +639,8 @@ const REGISTER = [
   ['CANON-TREE-FIRST', 'any write to a project source file before the task tree and flow board exist', 'create_task + create_subtask + create_flow_cluster + create_flow_connection', null],
   ['CANON-STATUS-SYNC', 'a milestone marked delivered with the task tree unread', 'list_subtasks / list_tasks / get_task', null],
   ['CANON-FLOW-READ', 'a portal write after a phase boundary with the flow board unread', 'list_flow_clusters + list_flow_connections', null],
+  ['CANON-KG-CONSULT', 'implementation, or a portal write after a phase boundary, before a graph is consulted', 'semantic_search_knowledge_graph, get_knowledge_graph or a focused interpret_knowledge_graph; no graph → create_knowledge_graph', ['interpret_knowledge_graph', 'create_knowledge_graph', 'extract_knowledge_graph', 'create_journal']],
+  ['CANON-JOURNAL-GRAPH', 'a portal write after a phase boundary whose journal lacks "What the graph showed"', 'update_journal/create_journal with that section', ['create_journal', 'update_journal', 'interpret_knowledge_graph']],
   ['CANON-BOARD-FIRST', 'brief/proposal/task writes before the alignment board', 'create_board + create_board_block(type mermaid) + read_board', null],
   ['CANON-READ-BACK', 'BLOCKS after a write until the mapped read returns the id', 'the mapped get_*/list_*, ideally batched in one bulk', null],
   ['CANON-ACCOUNT', 'BLOCKS a SILENT turn end while phases remain', 'continuing, or create_journal tagged "blocked"', null],
@@ -615,7 +648,7 @@ const REGISTER = [
   ['CANON-DEBT-READ-BACK', 'the NEXT turn\'s work while an earlier turn\'s write is unread', 'the mapped read — read_board / get_task / list_tasks; never refuses create_journal either', ['read_board', 'get_task', 'list_tasks', 'create_journal']],
   ['CANON-DEBT-CLOSEOUT', 'the NEXT turn\'s work while the close-out is unmade', 'create_board + create_knowledge_graph + extract_knowledge_graph + interpret_knowledge_graph + create_journal', ['create_board', 'create_knowledge_graph', 'extract_knowledge_graph', 'interpret_knowledge_graph', 'create_journal']],
 ];
-const ADVISORY_ONLY = 'CANON-COMPLETE, CANON-BULK, CANON-STATUS advise at turn end and never block.';
+const ADVISORY_ONLY = 'CANON-COMPLETE, CANON-BULK, CANON-STATUS, CANON-KG-LEARN, CANON-KG-GAPS advise at turn end and never block.';
 
 // ---------------------------------------------------------------------------
 // Emitters
@@ -684,6 +717,13 @@ function fold(rows, run) {
     closeoutDebt: null,
     debtAdoptedAt: 0,
     debtRefusals: new Map(),
+    // The graph as something READ, not only written — see KG_CONSULT_READS.
+    //   kgConsults: a consult of a graph's content ({g}) or an empty listing ({none})
+    //   kgLearn:    extract / interpret events, interpret carrying the gaps it reported
+    //   taskCreates: where an interpretation's gaps can become work (CANON-KG-GAPS)
+    kgConsults: [],
+    kgLearn: [],
+    taskCreates: [],
   };
 
   // A TURN BEGINS AT A USER PROMPT — never at a `stop` row.
@@ -844,12 +884,15 @@ function fold(rows, run) {
     // and dropping it made every CANON-JOURNAL-PHASE refusal open with the literal word
     // "undefined". A reason that reads as a template is exactly what teaches the model to
     // treat these refusals as injected text rather than as facts about its own call.
-    if (r.k === 'phase') { st.phaseBoundaries.push({ boundary: r.boundary || 'phase', id: r.id, status: r.status, t }); continue; }
+    if (r.k === 'phase') { st.phaseBoundaries.push({ boundary: r.boundary || 'phase', id: r.id, status: r.status, t, idx: ri }); continue; }
+    // The FULL ids of a long portal listing, beyond what its own row could carry — see
+    // canon-lib harvestAllIds. Seen-set only, and only ever written for a portal result.
+    if (r.k === 'seen') { (r.ids || []).forEach((i) => st.seen.add(i)); continue; }
     if (r.k !== 'post' && r.k !== 'bulk') continue;
 
     st.toolCallsSinceBlock++;
 
-    const apply = (tool, ids, ok, args, heads) => {
+    const apply = (tool, ids, ok, args, heads, replay) => {
       if (!tool) return;
       ids = ids || [];
       const a = args || {};
@@ -878,7 +921,15 @@ function fold(rows, run) {
         // minutes logged" as readily as it says an id. A false id in the SEEN set only
         // weakens CANON-ID; a false CHILD here is a refusal nothing can clear, because
         // there is no such subtask to complete. Children are uuid/slug shaped only.
-        ids.forEach((i) => { if (i !== a.parent_task_id && !/^\d+$/.test(i)) set.add(i); });
+        // An `h:<8 hex>` HEAD (a child listed inside a bulk whose row had to shrink — see
+        // `rd`) is kept as a head and matched by prefix in CANON-BOTTOM-UP. The `h:` tag is
+        // what keeps a bare 8-digit number from ever being mistaken for one.
+        const par = String(a.parent_task_id).toLowerCase();
+        ids.forEach((i) => {
+          if (i === par || (/^h:/.test(i) && par.startsWith(i.slice(2)))) return;
+          if (/^\d+$/.test(i)) return;
+          set.add(i);
+        });
         st.subtasks.set(a.parent_task_id, set);
       }
       if (tool === 'complete_task' && a.task_id) st.completed.add(a.task_id);
@@ -895,7 +946,22 @@ function fold(rows, run) {
       if (tool === 'extract_knowledge_graph') st.kgClose.extract++;
       if (tool === 'interpret_knowledge_graph') st.kgClose.interpret++;
       if (tool === 'get_knowledge_graph' || tool === 'semantic_search_knowledge_graph') st.kgClose.read++;
-      if (tool === 'create_journal' || tool === 'update_journal') st.journalWrites.push({ t, idx: ri, folder: a.folder_id || null });
+      if (tool === 'create_journal' || tool === 'update_journal') {
+        st.journalWrites.push({ t, idx: ri, folder: a.folder_id || null,
+          gs: Boolean(a.graph_section), wf: Boolean(a.wont_fix) });
+      }
+      if (ok !== false) {
+        const gid = typeof a.graph_id === 'string' ? a.graph_id.toLowerCase() : null;
+        if (KG_CONSULT_READS.has(tool) && (tool !== 'interpret_knowledge_graph' || a.focused)) {
+          st.kgConsults.push({ t, idx: ri, g: gid });
+        }
+        if (KG_LISTS.has(tool) && a.kg_none) st.kgConsults.push({ t, idx: ri, g: null, none: true });
+        if (tool === 'extract_knowledge_graph') st.kgLearn.push({ t, idx: ri, kind: 'extract', g: gid });
+        if (tool === 'interpret_knowledge_graph') {
+          st.kgLearn.push({ t, idx: ri, kind: 'interpret', g: gid, gap: Number(a.kg_gaps) || 0 });
+        }
+        if (tool === 'create_task' || tool === 'create_subtask') st.taskCreates.push({ t, idx: ri });
+      }
       if (/^(get_journal|list_journals|search_journals)$/.test(tool)) st.journalReads.push({ t });
       if (tool === 'list_flow_clusters') st.flowClusterReads.push({ t });
       if (/^(list_subtasks|list_tasks|get_task)$/.test(tool)) st.taskTreeReads.push({ t });
@@ -905,7 +971,9 @@ function fold(rows, run) {
         st.portalWriteTimes.push(t);
         if (st.firstPortalWriteAt === null) st.firstPortalWriteAt = t;
       }
-      if (ok !== false) { noteWrite(tool, ids, t, r.tu, a); clearReads(tool, ids, true, heads, a); }
+      // A REPLAY from `rd` carries the facts of a call whose inner row was trimmed away; it is
+      // never a fresh write, so it opens no read-back obligation it has no id to name.
+      if (ok !== false) { if (!replay) noteWrite(tool, ids, t, r.tu, a); clearReads(tool, ids, true, heads, a); }
     };
 
     if (r.k === 'bulk') {
@@ -920,7 +988,31 @@ function fold(rows, run) {
       // per-item split came back empty — which is exactly the state every bulk row written
       // before this fix is in, and those rows are still on disk being folded.
       (r.ids || []).forEach((i) => st.seen.add(i));
+      // `rd` — the reads and journal facts this bulk carried, written at PostToolUse so they
+      // outlive append() cutting `inner` to 20 rows, stripping its args, or dropping it
+      // whole. MEASURED 2026-10-09, all three: flow reads at items [22],[23] of a 25-call
+      // bulk were refused as unread by CANON-FLOW-READ; a 12-call bulk lost list_subtasks'
+      // parent_task_id and CANON-BOTTOM-UP refused a parent whose only child was done; and
+      // the children themselves never arrived because they are on the lines AFTER the item
+      // header. An inner row that survived is enriched from its `rd` entry; one that did not
+      // is replayed from it.
+      const rdBy = new Map();
+      for (const e of (r.rd || [])) if (e && typeof e.i === 'number' && e.t) rdBy.set(e.i, e);
+      const rdArgs = (e) => {
+        const x = {};
+        if (e.p) x.parent_task_id = e.p;
+        if (e.g) x.graph_id = e.g;
+        if (e.f) x.folder_id = e.f;
+        if (e.fo) x.focused = 1;
+        if (e.gs) x.graph_section = 1;
+        if (e.wf) x.wont_fix = 1;
+        if (e.none) x.kg_none = 1;
+        if (e.gap) x.kg_gaps = e.gap;
+        return x;
+      };
+      const seenI = new Set();
       for (const it of (r.inner || [])) {
+        seenI.add(it.i);
         // The owner as resolved at PostToolUse (`o`), or resolved here for a row that kept
         // its args — see bulkRefId. Without it a chained child keys on a template or itself.
         let a = it.args || {};
@@ -929,12 +1021,27 @@ function fold(rows, run) {
           const o = it.o || bulkRefId(a[ok0], r.inner);
           if (o !== (a[ok0] || null)) a = Object.assign({}, a, { [ok0]: o });
         }
-        apply(it.tool, it.ids, it.ok, a, bulkHeads);
+        let ids = it.ids;
+        const e = rdBy.get(it.i);
+        if (e && e.t === it.tool) {
+          a = Object.assign({}, rdArgs(e), a);
+          if (Array.isArray(e.k) && e.k.length) ids = [...new Set([...(it.ids || []), ...e.k])];
+        }
+        apply(it.tool, ids, it.ok, a, bulkHeads);
+      }
+      for (const [i, e] of rdBy) {
+        if (seenI.has(i)) continue;
+        apply(e.t, Array.isArray(e.k) ? e.k : [], true, rdArgs(e), bulkHeads, true);
       }
       // A write and its mapped read inside ONE bulk open-and-clear together — that is
       // canon (f) being obeyed correctly and must never block.
     } else {
-      apply(r.tool, r.ids, r.ok, r.args || {}, r.idh || []);
+      // kgn / kgap are facts about the RESPONSE (an empty graph listing; the gaps an
+      // interpretation reported), recorded at PostToolUse as numbers — never its text.
+      const a = (r.kgn || r.kgap)
+        ? Object.assign({}, r.args || {}, r.kgn ? { kg_none: 1 } : {}, r.kgap ? { kg_gaps: r.kgap } : {})
+        : (r.args || {});
+      apply(r.tool, r.ids, r.ok, a, r.idh || []);
       if (isPortalWrite(r.tool)) st.singleWrites++;
     }
   }
@@ -943,6 +1050,91 @@ function fold(rows, run) {
 
 function lastBoundary(st) {
   return st.phaseBoundaries.length ? st.phaseBoundaries[st.phaseBoundaries.length - 1] : null;
+}
+
+/** The graphs this run has built or fed — the ones a consult must be OF, when there are any. */
+function kgRelated(run) {
+  return (run && Array.isArray(run.kg_ids) ? run.kg_ids : []).map((x) => String(x).toLowerCase());
+}
+
+/**
+ * Has a graph related to this run been consulted since `b` (a boundary, or null for "since
+ * the run began")? Evidence from the session family's own stream, by ROW ORDER where both
+ * sides are in it, or from the run's record (`kg_consult_at`, written at PostToolUse) — the
+ * same either-or CANON-TREE-FIRST learnt to accept, because a run outlives a session and a
+ * sub-agent's stream holds none of its parent's reads.
+ *
+ * Which graph counts: the run's own graphs when it has any (kg_ids), otherwise ANY graph,
+ * and — only when the run has none — a listing that came back empty, which is the proof
+ * there was nothing to consult.
+ */
+function kgConsulted(st, run, b) {
+  const rel = kgRelated(run);
+  const after = (c) => (b ? (c.idx > b.idx) : true);
+  const ok = st.kgConsults.some((c) => after(c)
+    && (c.none ? !rel.length : (!rel.length || (c.g && rel.includes(c.g)))));
+  if (ok) return true;
+  const at = run && Number(run.kg_consult_at || 0);
+  return Boolean(at && (!b || at > b.t));
+}
+
+/** The one consult the reasons and notices name, with this run's graph id when it has one. */
+function kgConsultCall(run) {
+  const g = kgRelated(run)[0];
+  if (g) return 'semantic_search_knowledge_graph(graph_id="' + g + '", query="<the decision this phase is about to take>")';
+  return 'list_knowledge_graphs(search="' + String((run && run.project) || '').replace(/"/g, '') + '")';
+}
+
+/**
+ * CANON-KG-CONSULT's verdict for one call, or null. `b` is the boundary that opened the
+ * obligation, or null for the run's first implementation write.
+ *
+ * Budgeted like the debt gates (DEBT_BUDGET refusals per distinct obligation, counted from
+ * the ledger), because unlike CANON-FLOW-READ its clearing read depends on a record that can
+ * vanish — a graph deleted mid-run. Three refusals and that obligation stands itself down;
+ * the Stop advisory goes on naming it.
+ */
+function kgConsultVerdict(ctx, c, b) {
+  const { st, run } = ctx;
+  if (kgConsulted(st, run, b)) return null;
+  const dk = debtKey('kg', [run.run_id, b ? (b.boundary + ':' + (b.id || '') + ':' + b.t) : 'start']);
+  if ((st.debtRefusals.get(dk) || 0) >= DEBT_BUDGET) return null;
+  const rel = kgRelated(run);
+  const site = callSite(c);
+  return { gate: 'CANON-KG-CONSULT', dk, reason:
+    '[portal-canon CANON-KG-CONSULT] Refused. '
+    + (b
+      ? 'A phase boundary was recorded in this session (' + b.boundary + (b.id ? ' ' + b.id : '')
+        + ' → status "' + b.status + '") and since that boundary no knowledge graph has been consulted. '
+      : 'This is the first implementation work of the declared ' + run.run_id + ' work in state RUN, and no '
+        + 'knowledge graph has been consulted since it began. ')
+    + site + ' is ' + workPhrase(c) + '. '
+    + 'Canon: a graph is built to be read — a decision taken without consulting the graph the work is '
+    + 'building learns nothing from it. Consults that count: semantic_search_knowledge_graph, '
+    + 'interpret_knowledge_graph with a focus, or get_knowledge_graph, '
+    + (rel.length ? 'on this work\'s graph ' + rel[0] + '. ' : 'on any graph. ')
+    + (rel.length ? '' : 'When the workspace holds no graph for this project, a list_knowledge_graphs or '
+      + 'search_knowledge_graphs that comes back empty counts as the consult, and create_knowledge_graph is '
+      + 'never refused by this gate. ')
+    + 'The call that settles it: ' + kgConsultCall(run) + '. Reads inside a bulk count. This gate checks '
+    + 'the tool stream for one consult. It does not judge what the graph says.' };
+}
+
+/**
+ * Is this file/command call IMPLEMENTATION work — the thing CANON-KG-CONSULT wants a consult
+ * before? The same evidence CANON-TREE-FIRST reads: a write to a project file that is not a
+ * doc, lockfile or build output; or a command line that mutates and names no target outside
+ * the project (`git commit`, `npm install`). A command that names only targets OUTSIDE the
+ * project — a scratch file in a temp dir — is not.
+ */
+function isImplementationWork(ctx, c) {
+  const projDir = ctx.projDir;
+  const inProject = (p) => {
+    const n = L.normTarget(p).value || '';
+    return Boolean(projDir && n && n.startsWith(projDir) && !TREE_FIRST_EXEMPT.test(n));
+  };
+  if (c.effect.targets.length) return c.effect.targets.some((t) => inProject(t.path));
+  return Boolean(c.effect.mutation);
 }
 
 /**
@@ -1033,7 +1225,11 @@ function debtKey(kind, parts) {
  * to lose a line, so the head (liveness token, run, carried debt) and the tail (the escape)
  * are never trimmed and the middle is.
  */
-const CARD_CAP = 3000;
+// 3000 → 3600 in 1.9.0: CANON-KG-CONSULT and CANON-JOURNAL-GRAPH pushed the three debt and
+// close-out gates off the end of a plain card. The cap exists to bound the card, not to hide
+// gates from it; a card that only lists every gate when nothing else is on it is the wrong way
+// round, so it is sized for the full register plus a run line with room to spare.
+const CARD_CAP = 3600;
 
 function buildCard(run, st, token) {
   const head = [];
@@ -1232,6 +1428,20 @@ function modePrompt(payload) {
     if (st.obligations.size) {
       bits.push('unverified writes right now: ' + st.obligations.size
         + ' (' + [...st.obligations.values()].slice(0, 4).map((o) => o.w).join(', ') + ')');
+    }
+    // THE GRAPH, on the channel the model acts on. A CANON-KG-CONSULT refusal states facts
+    // only, so the consult it wants is named HERE, before the turn's first action.
+    if (run.state === 'RUN') {
+      const b = lastBoundary(st);
+      if (L.gateArmed('CANON-KG-CONSULT', run).armed && !kgConsulted(st, run, b)) {
+        bits.push('[portal-canon] CANON-KG-CONSULT: no knowledge graph consulted since '
+          + (b ? 'the last phase boundary' : 'this work began') + '. Before deciding, consult it: '
+          + kgConsultCall(run) + (kgRelated(run).length ? '' : ' (if none exist for this project, create_knowledge_graph next)') + '.');
+      }
+      if (b && L.gateArmed('CANON-JOURNAL-GRAPH', run).armed
+          && !st.journalWrites.some((j) => j.t >= b.t && j.gs)) {
+        bits.push('[portal-canon] CANON-JOURNAL-GRAPH: the phase journal needs a "What the graph showed" section.');
+      }
     }
   }
   const downs = [];
@@ -1433,11 +1643,15 @@ function evaluateCall(ctx, c) {
           + 'cannot be known complete while its children are unread. This gate checks the tool stream '
           + 'for that read. It does not judge whether the work is done.' };
       }
-      const openChild = [...listed].find((x) => !st.completed.has(x));
+      // `h:<8 hex>` is a child listed inside a bulk whose row had to shrink: matched by prefix.
+      const done = (x) => st.completed.has(x)
+        || (/^h:/.test(x) && [...st.completed].some((id) => String(id).toLowerCase().startsWith(x.slice(2))));
+      const openChild = [...listed].find((x) => !done(x));
       if (openChild) {
+        const shown = /^h:/.test(openChild) ? openChild.slice(2) + '… (first 8 characters)' : openChild;
         return { gate: 'CANON-BOTTOM-UP', reason:
           '[portal-canon CANON-BOTTOM-UP] Refused. ' + site + ' targets task ' + tid
-          + ', whose subtask ' + openChild + ' was listed in this session and has no complete_task '
+          + ', whose subtask ' + shown + ' was listed in this session and has no complete_task '
           + 'recorded against it. Canon: completion runs bottom-up — subtasks before tasks before '
           + 'milestones. This gate compares listed children against completed children. It does not '
           + 'judge whether the work is done.' };
@@ -1474,7 +1688,7 @@ function evaluateCall(ctx, c) {
   // ---- P5 CANON-JOURNAL-PHASE ----
   // JOURNAL_CLEARING is excluded, or this gate refuses the very call it demands. See the
   // set's own comment; the pair of tests that hold it down are in canon-selftest.js.
-  if (c.portalWrite && !JOURNAL_CLEARING.has(c.bare) && isRun && run.state === 'RUN'
+  if (c.portalWrite && !JOURNAL_CLEARING.has(c.bare) && !KG_LEARNING.has(c.bare) && isRun && run.state === 'RUN'
       && armed('CANON-JOURNAL-PHASE')) {
     const b = lastBoundary(st);
     if (b) {
@@ -1520,7 +1734,7 @@ function evaluateCall(ctx, c) {
   // one refused it, two gates would each be waiting on a call the other forbids — the latch
   // shape this project has already paid for six times. Journalling is always permitted; the
   // board read is required before the REST of the phase's writes.
-  if (c.portalWrite && !JOURNAL_CLEARING.has(c.bare) && isRun && run.state === 'RUN'
+  if (c.portalWrite && !JOURNAL_CLEARING.has(c.bare) && !KG_LEARNING.has(c.bare) && isRun && run.state === 'RUN'
       && armed('CANON-FLOW-READ')) {
     const b = lastBoundary(st);
     if (b) {
@@ -1537,6 +1751,49 @@ function evaluateCall(ctx, c) {
           + 'carry dependency order that exists nowhere else — a phase can be delivered out of the order '
           + 'the board records, and nothing else will say so. This gate checks that both reads happened '
           + 'after the boundary. It does not judge what the board contains.' };
+      }
+    }
+  }
+
+  // ---- P5d CANON-KG-CONSULT (the phase half) ----
+  //
+  // Same shape as CANON-FLOW-READ: a boundary opens the obligation, one read closes it, and
+  // only a portal WRITE is refused — never a read, never a journal entry, never the KG calls
+  // the learning loop is made of (KG_LEARNING), or this gate would refuse its own key.
+  if (c.portalWrite && !JOURNAL_CLEARING.has(c.bare) && !KG_LEARNING.has(c.bare) && isRun
+      && run.state === 'RUN' && armed('CANON-KG-CONSULT')) {
+    const b = lastBoundary(st);
+    if (b) {
+      const v = kgConsultVerdict(ctx, c, b);
+      if (v) return v;
+    }
+  }
+
+  // ---- P5e CANON-JOURNAL-GRAPH ----
+  //
+  // CANON-JOURNAL-PHASE proves a journal entry EXISTS after a boundary. This proves it says
+  // what the graph showed: a heading or line containing "What the graph showed" (or a line
+  // opening `graph:`) in an entry written since the boundary. A STRUCTURE check, read as a
+  // boolean at PostToolUse — the ledger never holds a word of the entry (canon-lib
+  // journalFlags). Evaluated after CANON-JOURNAL-PHASE so an unjournalled boundary is named by
+  // that gate first; update_journal is never refused by either, so the section can always be
+  // added to the entry already written.
+  if (c.portalWrite && !JOURNAL_CLEARING.has(c.bare) && !KG_LEARNING.has(c.bare) && isRun
+      && run.state === 'RUN' && armed('CANON-JOURNAL-GRAPH')) {
+    const b = lastBoundary(st);
+    if (b) {
+      const folder = run.journal_folder && run.journal_folder.id;
+      const has = st.journalWrites.some((j) => j.t >= b.t && j.gs && (!folder || !j.folder || j.folder === folder));
+      if (!has) {
+        return { gate: 'CANON-JOURNAL-GRAPH', reason:
+          '[portal-canon CANON-JOURNAL-GRAPH] Refused. A phase boundary was recorded in this session ('
+          + b.boundary + (b.id ? ' ' + b.id : '') + ' → status "' + b.status + '") and no journal entry '
+          + 'written since it carries a "What the graph showed" section (a heading or line with that '
+          + 'phrase, or a line opening "graph:"). ' + site + ' is a portal write. Canon (d): each phase\'s '
+          + 'journal records what consulting the knowledge graph showed before the phase\'s decisions, so '
+          + 'the graph is something the work learns from rather than something it only feeds. '
+          + 'update_journal on the phase entry, or create_journal, is never refused by this gate. This '
+          + 'gate checks the entry\'s structure. It does not read or judge what the section says.' };
       }
     }
   }
@@ -1631,6 +1888,17 @@ function evaluateCall(ctx, c) {
     }
   }
 
+  // ---- P7b CANON-KG-CONSULT (the implementation half) ----
+  //
+  // After CANON-TREE-FIRST on purpose: a decomposition that does not exist yet is the more
+  // basic thing missing, and its refusal says so first. Since the last boundary when there is
+  // one — a new phase's implementation starts from a fresh consult — else since the run began.
+  if ((c.fileWrite || c.mutates) && !c.portal && isRun && run.state === 'RUN'
+      && armed('CANON-KG-CONSULT') && isImplementationWork(ctx, c)) {
+    const v = kgConsultVerdict(ctx, c, lastBoundary(st));
+    if (v) return v;
+  }
+
   // ---- P8 CANON-BOARD-FIRST ----
   if (c.portal && BOARD_FIRST_GATED.has(c.bare) && isRun && run.state === 'ALIGN'
       && armed('CANON-BOARD-FIRST')) {
@@ -1682,7 +1950,22 @@ function simulateInner(st, tool, args) {
   if (tool === 'read_board' || tool === 'list_board_blocks') st.board.read++;
   if (tool === 'complete_task' && a.task_id) st.completed.add(a.task_id);
   if (tool === 'create_journal' || tool === 'update_journal') {
-    st.journalWrites.push({ t, idx: Number.MAX_SAFE_INTEGER, folder: a.folder_id || null });
+    const jf = L.journalFlags(a.content);
+    st.journalWrites.push({ t, idx: Number.MAX_SAFE_INTEGER, folder: a.folder_id || null,
+      gs: jf.graph_section, wf: jf.wont_fix });
+  }
+  // A consult batched ahead of the work it informs — bulk([semantic_search…, create_task]) —
+  // is the behaviour CANON-KG-CONSULT asks for in one round trip, so it is simulated as made.
+  // An empty listing cannot be known before it returns; it is simulated as empty only when
+  // the run has no graph to consult anyway, which errs, as everything here must, towards
+  // fewer refusals — PostToolUse records what the listing actually said.
+  {
+    const gid = typeof a.graph_id === 'string' ? a.graph_id.toLowerCase() : null;
+    const focused = typeof a.focus === 'string' && a.focus.trim();
+    if (KG_CONSULT_READS.has(tool) && (tool !== 'interpret_knowledge_graph' || focused)) {
+      st.kgConsults.push({ t, idx: Number.MAX_SAFE_INTEGER, g: gid });
+    }
+    if (KG_LISTS.has(tool)) st.kgConsults.push({ t, idx: Number.MAX_SAFE_INTEGER, g: null, none: true });
   }
   if (/^(get_journal|list_journals|search_journals)$/.test(tool)) st.journalReads.push({ t });
   if (tool === 'list_flow_clusters') st.flowClusterReads.push({ t });
@@ -1873,6 +2156,42 @@ function withVouched(vouched, heads) {
   return [...new Set([...vouched, ...(heads || [])])];
 }
 
+/** Inner bulk calls whose facts the gates read — the `rd` summary keeps exactly these. */
+const RD_TOOLS = new Set(['list_subtasks', 'list_tasks', 'get_task', 'list_flow_clusters',
+  'list_flow_connections', 'get_journal', 'list_journals', 'search_journals', 'create_journal',
+  'update_journal', 'read_channel_policy', 'read_channel_messages', 'read_board', 'list_board_blocks',
+  'semantic_search_knowledge_graph', 'interpret_knowledge_graph', 'get_knowledge_graph',
+  'list_knowledge_graphs', 'search_knowledge_graphs', 'extract_knowledge_graph', 'create_task', 'create_subtask']);
+
+/** The KG writes that make a graph THIS run's own. */
+const KG_BUILDS = new Set(['create_knowledge_graph', 'add_source_to_knowledge_graph', 'extract_knowledge_graph']);
+
+/**
+ * Record on the RUN which graphs it builds, and when it last consulted one of them.
+ *
+ * On the run, not only in the session, for the reason creditTree gives: a run outlives a
+ * session, and a sub-agent's stream holds none of its parent's reads — a consult the parent
+ * made must not leave every lane it spawns refused for want of one. Returns true when the run
+ * changed. `e` carries facts about the response (`none`: an empty listing).
+ */
+function noteRunGraph(run, tool, graphId, args, e, t) {
+  if (!run || !tool) return false;
+  let changed = false;
+  const g = (typeof graphId === 'string' && L.idShape(graphId) === 'uuid') ? graphId.toLowerCase() : null;
+  if (g && KG_BUILDS.has(tool)) {
+    run.kg_ids = Array.isArray(run.kg_ids) ? run.kg_ids : [];
+    if (!run.kg_ids.includes(g)) { run.kg_ids.push(g); run.kg_ids = run.kg_ids.slice(-10); changed = true; }
+  }
+  const rel = kgRelated(run);
+  const a = args || {};
+  const focusedOk = tool !== 'interpret_knowledge_graph' || (typeof a.focus === 'string' && a.focus.trim());
+  if (KG_CONSULT_READS.has(tool) && focusedOk && g && (!rel.length || rel.includes(g))) {
+    run.kg_consult_at = t; changed = true;
+  }
+  if (KG_LISTS.has(tool) && e && e.none && !rel.length) { run.kg_consult_at = t; changed = true; }
+  return changed;
+}
+
 function modePost(payload) {
   const key = L.sessionKey(payload);
   const raw = payload.tool_name || '';
@@ -1882,7 +2201,15 @@ function modePost(payload) {
   // MUST go through responseText: an MCP tool_response is content blocks, not a string,
   // and stringifying it escapes every newline — which made the line-anchored bulk item
   // regex match nothing and emptied `inner` on every bulk row ever written.
-  const respFull = L.responseText(respRaw);
+  let respFull = L.responseText(respRaw);
+  // THE OVERFLOW STUB. Past the runtime's token ceiling the hook is handed a pointer to the
+  // result instead of the result — see canon-lib overflowText. Read back from the saved file,
+  // so the listing that proves a write persisted is not the one listing the gate never sees.
+  // Only for portal results: nothing else here reads a response.
+  if (isPortalTool(bare)) {
+    const over = L.overflowText(respFull);
+    if (over && over.text) respFull = over.text;
+  }
   let resp = respFull;
   if (resp.length > 65536) resp = resp.slice(0, 65536);
   const ok = !(respRaw && typeof respRaw === 'object' && respRaw.isError);
@@ -1891,8 +2218,19 @@ function modePost(payload) {
   const t = L.nowS();
   const agent = payload.agent_id || null;
 
+  // EVERY id a long portal listing returned, beyond what its own row can carry, so CANON-ID
+  // trusts the 60th row of a listing exactly as it trusts the first. Chunked to the ledger's
+  // line size; written before the row itself so the fold has them by the next PreToolUse.
+  if (isPortalTool(bare) && respFull.length > 1024) {
+    const have = new Set(ids);
+    const extra = L.harvestAllIds(respFull).filter((i) => !have.has(i));
+    for (let k = 0; k < extra.length; k += 90) {
+      L.append(key, { v: 1, t, k: 'seen', s: key, a: agent, ids: extra.slice(k, k + 90) });
+    }
+  }
+
   if (bare === 'bulk') {
-    const inner = L.parseBulkResponse(resp, (input && input.calls) || []);
+    const inner = L.parseBulkResponse(respFull, (input && input.calls) || []);
     const names = L.bulkInnerNames(input);
     const calls = (input && input.calls) || [];
     const rows = inner.map((it) => ({
@@ -1909,6 +2247,49 @@ function modePost(payload) {
       if (!k0 || r0.ok === false || !r0.args || typeof r0.args[k0] !== 'string') continue;
       const o = bulkRefId(r0.args[k0], rows);
       if (o) { r0.o = o; r0.args[k0] = o; } else delete r0.args[k0];
+    }
+    // `rd`: what the gates need from this bulk's READS and journal writes, small enough to
+    // survive every trim append() makes — see the fold's `rd` note for the three measured
+    // ways the inner rows alone lost them. Never content: ids, flags and counts.
+    const rd = [];
+    for (const it of inner) {
+      if (it.ok === false || !RD_TOOLS.has(it.tool)) continue;
+      const a0 = (calls[it.i] && (calls[it.i].arguments || calls[it.i].args)) || {};
+      const e = { i: it.i, t: it.tool };
+      if (it.tool === 'list_subtasks') {
+        if (typeof a0.parent_task_id === 'string') e.p = a0.parent_task_id;
+        const par = String(e.p || '').toLowerCase();
+        const kids = L.harvestSeen(it.text || '').filter((x) => x !== par && !/^\d+$/.test(x));
+        if (kids.length) e.k = kids.slice(0, 30);
+      }
+      const g = bulkRefId(a0.graph_id, rows);
+      if (g && /knowledge_graph/.test(it.tool)) e.g = String(g).toLowerCase();
+      if (it.tool === 'interpret_knowledge_graph') {
+        if (typeof a0.focus === 'string' && a0.focus.trim()) e.fo = 1;
+        const gap = L.kgGaps(it.text || '');
+        if (gap) e.gap = gap;
+      }
+      if (KG_LISTS.has(it.tool) && L.kgNone(it.text || '')) e.none = 1;
+      if (it.tool === 'create_journal' || it.tool === 'update_journal') {
+        const jf = L.journalFlags(a0.content);
+        if (jf.graph_section) e.gs = 1;
+        if (jf.wont_fix) e.wf = 1;
+        if (typeof a0.folder_id === 'string') e.f = a0.folder_id;
+      }
+      rd.push(e);
+    }
+    // The run learns which graphs are its own from a bulk exactly as from a single call.
+    {
+      const runK = L.resolveRun(payload.cwd);
+      if (runK && runK.state === 'RUN') {
+        for (const r0 of rows) {
+          if (r0.ok === false) continue;
+          const a0 = (calls[r0.i] && (calls[r0.i].arguments || calls[r0.i].args)) || {};
+          const g = r0.tool === 'create_knowledge_graph' ? (r0.ids || [])[0] : bulkRefId(a0.graph_id, rows);
+          noteRunGraph(runK, r0.tool, g, a0, rd.find((e) => e.i === r0.i), t);
+        }
+        L.saveRun(runK);
+      }
     }
     // A decomposition built with `bulk` — which canon (f) tells the agent to prefer — must
     // credit the run exactly as the single-call path does.
@@ -1966,14 +2347,25 @@ function modePost(payload) {
       // parsing bug into three false refusals. Per-item ids are the precise channel; this
       // is the coarse one that survives any future failure to split the response, so an id
       // the portal demonstrably returned can never be called unseen again.
-      ids, inner: rows, tu: payload.tool_use_id || null, ms: payload.duration_ms || null,
+      ids, inner: rows, rd: rd.length ? rd : undefined,
+      tu: payload.tool_use_id || null, ms: payload.duration_ms || null,
     });
   } else {
+    const kgn = KG_LISTS.has(bare) && ok && L.kgNone(respFull) ? 1 : undefined;
+    const kgap = bare === 'interpret_knowledge_graph' && ok ? (L.kgGaps(respFull) || undefined) : undefined;
     L.append(key, {
       v: 1, t, k: 'post', s: key, a: agent, tool: bare || raw, raw, ok, ids,
       idh: withVouched(pendingVouchHeads(key, payload.cwd, [bare], [], respFull), L.harvestIdHeads(resp)),
       args: L.safeArgs(input), tu: payload.tool_use_id || null, ms: payload.duration_ms || null,
+      kgn, kgap,
     });
+    if (ok && isPortalTool(bare)) {
+      const runK = L.resolveRun(payload.cwd);
+      if (runK && runK.state === 'RUN') {
+        const g = bare === 'create_knowledge_graph' ? ids[0] : input.graph_id;
+        if (noteRunGraph(runK, bare, g, input, { none: kgn }, t)) L.saveRun(runK);
+      }
+    }
     // The decomposition is a durable fact about the RUN, not about this session. Recorded
     // here so it survives a restart and is visible to a sub-agent, whose own tool stream
     // never contains portal writes — see creditTree.
@@ -2156,6 +2548,52 @@ function recordDebt(payload, run, st) {
   });
 }
 
+/**
+ * The two KG advisories. Neither ever blocks — an advisory is the right strength for a
+ * judgement a gate cannot check (whether a phase's graph was worth extracting, whether a gap
+ * deserves a task), and both speak only about a boundary crossed in THIS turn, so an old
+ * boundary is not re-announced at every turn end for the rest of the run.
+ *
+ *   CANON-KG-LEARN — a phase passed without extract_knowledge_graph AND
+ *     interpret_knowledge_graph since the boundary before it.
+ *   CANON-KG-GAPS — an interpretation reported gaps (candidate surprising connections,
+ *     isolated nodes), a phase boundary has passed since, and nothing after the
+ *     interpretation turned them into work: no create_task/create_subtask, no journal entry
+ *     carrying a "won't fix" line.
+ */
+function kgAdvisories(st, run) {
+  const out = [];
+  const bs = st.phaseBoundaries;
+  const thisTurn = bs.filter((b) => b.idx > st.turnStartIdx);
+  const g = kgRelated(run)[0] || '<graph id>';
+  if (thisTurn.length) {
+    const b = thisTurn[thisTurn.length - 1];
+    const prev = bs[bs.indexOf(b) - 1];
+    const from = prev ? prev.idx : -1;
+    const ex = st.kgLearn.some((e) => e.kind === 'extract' && e.idx > from);
+    const ip = st.kgLearn.some((e) => e.kind === 'interpret' && e.idx > from);
+    if (!ex || !ip) {
+      out.push('[portal-canon CANON-KG-LEARN] The phase that ended at ' + b.boundary + (b.id ? ' ' + b.id : '')
+        + ' passed with no ' + [!ex ? 'extract_knowledge_graph' : null, !ip ? 'interpret_knowledge_graph' : null]
+          .filter(Boolean).join(' and ') + ' since the boundary before it. Canon: each phase feeds the graph '
+        + '(extract_knowledge_graph(graph_id="' + g + '")) and asks it what it now shows '
+        + '(interpret_knowledge_graph(graph_id="' + g + '", focus="<what the next phase must decide>")), and the '
+        + 'phase journal records it under "What the graph showed".');
+    }
+  }
+  const gap = [...st.kgLearn].reverse().find((e) => e.kind === 'interpret' && e.gap > 0);
+  if (gap && bs.some((b) => b.idx > gap.idx && b.idx > st.turnStartIdx)) {
+    const acted = st.taskCreates.some((x) => x.idx > gap.idx) || st.journalWrites.some((j) => j.idx > gap.idx && j.wf);
+    if (!acted) {
+      out.push('[portal-canon CANON-KG-GAPS] An interpretation' + (gap.g ? ' of graph ' + gap.g : '') + ' reported '
+        + gap.gap + ' gap(s) — candidate surprising connections and/or isolated nodes — and a phase boundary has '
+        + 'passed since with no create_task/create_subtask and no journal "won\'t fix" line after it. Canon: a gap '
+        + 'the graph shows becomes a task, or a journal line saying why it won\'t be fixed.');
+    }
+  }
+  return out;
+}
+
 function stopDecide(payload, key, agent, t, run, st, net) {
 
   const advisories = [];
@@ -2188,6 +2626,10 @@ function stopDecide(payload, key, agent, t, run, st, net) {
       }
     }
   }
+
+  // S7 CANON-KG-LEARN and S8 CANON-KG-GAPS (advise only) — the graph as something the work
+  // LEARNS from, phase by phase, rather than something filled once and read at close-out.
+  if (run && run.state === 'RUN') advisories.push(...kgAdvisories(st, run));
 
   const advisoryOnly = L.canonMode() === 'advisory';
 
@@ -2542,6 +2984,15 @@ function cliStatusJson() {
           owed: !wrote || !read };
       }
       if (st.closeoutDebt) res.closeout = closeoutOwed(st).map((m) => m.id);
+      // ADDITIVE: the graph half of a phase. `consultOwed` is what CANON-KG-CONSULT would
+      // refuse a portal write for right now; `journalGraphOwed` what CANON-JOURNAL-GRAPH would.
+      if (run && run.state === 'RUN') {
+        const kgB = lastBoundary(st);
+        res.kg = { graph: kgRelated(run)[0] || null, consultOwed: !kgConsulted(st, run, kgB),
+          journalGraphOwed: Boolean(kgB) && !st.journalWrites.some((j) => j.t >= kgB.t && j.gs),
+          consults: st.kgConsults.length, extracts: st.kgLearn.filter((e) => e.kind === 'extract').length,
+          interprets: st.kgLearn.filter((e) => e.kind === 'interpret').length };
+      }
     }
     // The carried debt file, read without readDebt's expiry delete.
     const d = L.readJSON(L.debtFile(L.projHash(cwd)));
@@ -2615,9 +3066,9 @@ function main() {
 // assignment below main() that circular require handed back an empty object — the gate's
 // own tests could not see the register they exist to police.
 module.exports = { PORTAL_TOOLS, WRITE_READ_MAP, REGISTER, JOURNAL_CLEARING, BOARD_FIRST_GATED,
-  CLOSEOUT_CLEARING, OTHER_GATE_KEYS, CARD_CAP, DEBT_BUDGET,
+  CLOSEOUT_CLEARING, OTHER_GATE_KEYS, CARD_CAP, DEBT_BUDGET, KG_LEARNING, KG_CONSULT_READS,
   fold, isPortalWrite, isPortalTool, isDeleteWrite, buildCard, standDownExempt, evaluateCall,
-  settleCall, carriedDebt, closeoutMissing, closeoutOwed };
+  settleCall, carriedDebt, closeoutMissing, closeoutOwed, kgConsulted, kgAdvisories };
 
 // Only run when invoked directly, so `selftest` can import this module and drive the
 // gates with fixture payloads instead of a live session.

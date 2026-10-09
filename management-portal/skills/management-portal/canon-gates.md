@@ -66,9 +66,9 @@ carries one of exactly four states, and **no state is ever quietly rounded up to
 | **ADVISORY** | Verified to only inject text. It can be ignored, and sometimes should be. |
 | **PENDING** | Neither the code nor the evidence. The design exists; nothing else does. Treat as advisory until proven. |
 
-### As of 2026-10-06 — plugin 1.8.0 (two rules stopped being prose in 1.7.0)
+### As of 2026-10-09 — plugin 1.9.0 (two rules stopped being prose in 1.7.0)
 
-**The engine ships.** `scripts/canon-gate.js` is present, 2448 lines, and emits a real `PreToolUse`
+**The engine ships.** `scripts/canon-gate.js` is present, 3077 lines, and emits a real `PreToolUse`
 `hookSpecificOutput.permissionDecision: "deny"`. `hooks/hooks.json` holds **11 hook entries**, and
 canon-gate owns **8** of them — one on each of `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
 `PostToolUse`, `SubagentStart`, `SubagentStop`, `Stop` and `SessionEnd`; `watch-alarm.js` owns the
@@ -78,7 +78,7 @@ other three. The advisory `portal-gate.js` that canon-gate replaces has been **d
 |---|---|---|
 | Team Chat turn-end ABSENT gate (`watch-alarm.js`) | refuses to end a turn | **ENFORCED** — shipping since 1.4.x, `decision: block`, verified on 2.1.222 and 2.1.85 |
 | `CANON-ID`, `CANON-READ-BACK`, `CANON-BOTTOM-UP` | refuses / blocks | **ENFORCED** — observed refusing real calls in a live session on 2026-08-16. See the correction below: the first `CANON-ID` refusals were **false**. |
-| Every other canon gate in the register below | refuses / blocks / advises | **ARMED** — shipped, wired, fixture-verified by 425 assertions. No live refusal observed for these. |
+| Every other canon gate in the register below | refuses / blocks / advises | **ARMED** — shipped, wired, fixture-verified by 530 assertions. No live refusal observed for these (the 1.9.0 gates CANON-KG-CONSULT and CANON-JOURNAL-GRAPH included). |
 | The 1.4.3 read-after-write reminders (`portal-gate.js`) | reminder only | **GONE** — the file is deleted in 1.5.0. See "What 1.4.3 did" below |
 
 **The correction that matters more than the promotion.** Three gates are now ENFORCED, and the first live
@@ -189,7 +189,12 @@ open silently.
 ```bash
 node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" doctor    # home, run, gates armed, last 5 blocks
 node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" selftest  # fixture payloads through every mode
+node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" status --json  # read-only snapshot (what the mod reads)
 ```
+
+Since 1.9.0 `status --json` carries an additive `kg` object while a run is in RUN —
+`{graph, consultOwed, journalGraphOwed, consults, extracts, interprets}`: the run's graph, whether
+`CANON-KG-CONSULT` / `CANON-JOURNAL-GRAPH` would refuse a portal write right now, and the counts.
 
 ---
 
@@ -209,9 +214,9 @@ held as **data** in `REGISTER`'s fourth column, and `canon-selftest.js` drives e
 latched state and back out **through exactly those calls**. **Documentation that omits this column
 recreates the bug.**
 
-`REGISTER` carries **13 gates**. `CANON-READ-BACK-STOP` is a real, separately stand-downable gate
+`REGISTER` carries **17 gates** (as of 1.9.0). `CANON-READ-BACK-STOP` is a real, separately stand-downable gate
 that is **not** in `REGISTER` — so it never appears on the canon card or in `doctor` output, even
-though its own block reason tells you to stand it down by name. Three advisories sit outside it too.
+though its own block reason tells you to stand it down by name. Five advisories sit outside it too.
 
 ### Refusals (PreToolUse — the call never runs)
 
@@ -226,18 +231,24 @@ cannot hide behind another gate's reason.
 | **CANON-BOTTOM-UP** | `complete_task(X)` when no `list_subtasks(parent_task_id=X)` was read this session, or when a listed child of X has no recorded completion. | `list_subtasks(X)`, then complete the children, then the parent. | — |
 | **CANON-COORD-ROLE** | **Any file write or mutating command** while this session holds the coordinator title. It reads **what the call does** — the file it writes, the program its command line runs — **not which tool carried it**, so `PowerShell` and `bulk` are covered exactly as `Bash` is. Portal tools have an empty effect, so **portal writes are not refused here**. | `transfer_coordinator_title`, or standing this one gate down. | `transfer_coordinator_title` |
 | **CANON-POLICY-FIRST** | In participant mode: the first portal write or file edit before both `read_channel_policy` and `read_channel_messages`. | Read the policy and the messages. | — |
-| **CANON-JOURNAL-PHASE** | In a RUN: the first portal write after a phase boundary, when the journal has not been both written and read back since that boundary. | `create_journal(folder_id=…)` **and** a `get_journal`/`list_journals`/`search_journals` read-back. | `create_journal`, `update_journal`, `create_journal_folder` |
+| **CANON-JOURNAL-PHASE** | In a RUN: the first portal write after a phase boundary, when the journal has not been both written and read back since that boundary. | `create_journal(folder_id=…)` **and** a `get_journal`/`list_journals`/`search_journals` read-back. | `create_journal`, `update_journal`, `create_journal_folder` — and, **since 1.9.0**, the KG learning calls (`interpret_`, `extract_`, `add_source_to_`, `create_knowledge_graph`): interpret is classed as a portal write and was refused while CANON-KG-CONSULT demanded it |
+| **CANON-KG-CONSULT** *(1.9.0)* | In a RUN, until a knowledge graph has been **consulted**: (a) the first **implementation** work — a write to a project source file (CANON-TREE-FIRST's detection: not docs, lockfiles or build output) or a mutating command line naming no target outside the project — since the last boundary, or since the run began; and (b) the first portal write after **each phase boundary**. The gates made agents *write* graphs and only demanded a read at close-out; the journal and flow board are gated per phase, and now the graph is too. Phase half is evaluated after CANON-JOURNAL-PHASE and CANON-FLOW-READ; implementation half after CANON-TREE-FIRST. | `semantic_search_knowledge_graph`, `interpret_knowledge_graph` **with a `focus`**, or `get_knowledge_graph` — on the run's own graph (`kg_ids`: graphs the run created, added sources to or extracted) or on any graph while the run has none. No graph for the project: an empty `list_knowledge_graphs`/`search_knowledge_graphs` counts. Reads inside `bulk` count, and the consult is credited on the run (`kg_consult_at`), so sub-agents and restarted sessions are not refused for one the parent made. The `UserPromptSubmit` notice names the call, e.g. `semantic_search_knowledge_graph(graph_id="<run graph>", query="<the decision this phase is about to take>")` or `list_knowledge_graphs(search="<project>")`. | reads, `create_journal`, `update_journal`, `create_journal_folder`, and the KG learning calls — `create_knowledge_graph` is never refused by it. Budget **3 per distinct obligation**, then it stands itself down for that obligation, because its clearing read depends on a record that can vanish. |
+| **CANON-JOURNAL-GRAPH** *(1.9.0)* | In a RUN: the first portal write after a phase boundary when no journal entry written since it carries a **"What the graph showed"** section — a heading/line containing that phrase, or a line opening `graph:`. Sibling of CANON-JOURNAL-PHASE, evaluated after CANON-KG-CONSULT. | `update_journal` on the phase entry, or `create_journal`, with that section. **Structure check only** — the ledger stores a boolean, never the words. | `create_journal`, `update_journal`, `create_journal_folder`, and the KG learning calls |
 | **CANON-KG-DESTRUCTIVE** | In a RUN: `delete_knowledge_graph` and `regenerate_knowledge_graph` — **both destroy nodes and edges** — plus `generate_knowledge_graph` on a graph already seen. Deletion destroys strictly more than regeneration and was previously ungated. | `extract_knowledge_graph`, the incremental path; `remove_source_from_knowledge_graph` narrows a graph without destroying it. Owner authorisation is the `ALLOW-KG-REGEN-<run_id>` sentinel, which is preferred over standing the gate down. | — |
 | **CANON-TREE-FIRST** | Any write to a project source file before the task tree and flow board exist (≥1 each of `create_task`, `create_subtask`, `create_flow_cluster`, `create_flow_connection`). **Armed in ALIGN as well as RUN.** | Build the breakdown first. Exempts `node_modules`, `.git`, build dirs, `*.md`, `*.log`, lockfiles, and any path containing `agent-onboarding` or `management-portal-canon`. | — |
 | | **Since 1.6.3** the four calls are recorded on the RUN, so they survive a restart and are visible to a sub-agent — whose own stream never contains portal writes, and must not. |
 | **CANON-BOARD-FIRST** | While a run is in ALIGN: `update_brief`, `update_brief_field`, `create_proposal`, `add_proposal_phase`, `add_proposal_milestone`, `create_task`, **`create_subtask`** and **`insert_diagram`**. The last two were holes you could drive the whole gate through — build the tree one subtask at a time, or paste the roadmap straight into the proposal, without ever making the board. | `create_board` + a `mermaid` block + `read_board`. **Inert once the run is promoted to RUN.** | — |
+
+**The natural order at a phase boundary**, so the phase gates never queue behind each other: consult
+the graph (and `extract_` + `interpret_` it) → journal with "What the graph showed" and read it back →
+`list_flow_clusters` + `list_flow_connections` → continue the work.
 
 ### Compulsions (PostToolUse / Stop — the action already happened)
 
 | Gate | Blocks when | Clears by |
 |---|---|---|
 | **CANON-READ-BACK** | A portal write has no mapped read carrying the same id. Once per turn, 12 per session. **Deletes clear on ABSENCE** — the block text says so, because an id coming *back* after a delete is proof the delete failed. | The mapped read from the write→read map (`reference.md` §3) — ideally one `bulk` of them. **Since 1.7.6** the settling call is printed with the id the read TAKES (`READ_ARG_SOURCE`) — for a subtask that is its parent, not the new child. **Since 1.7.7** inbox reply/forward (`read_inbox`), `forward_chat_message` (`read_channel_messages` or `read_dm_messages`) and `mark_dm_read` (`read_dm_conversations`) owe one too. |
-| **CANON-FLOW-READ** | A portal write after a phase boundary with the flow board unread. The board carries dependency order that exists nowhere else, and a phase can be delivered out of that order with nothing to say so. | `list_flow_clusters` **and** `list_flow_connections` since the boundary. Clusters alone do not clear it — the relations are the ordering. Journalling is exempt, or this and CANON-JOURNAL-PHASE deadlock. |
+| **CANON-FLOW-READ** | A portal write after a phase boundary with the flow board unread. The board carries dependency order that exists nowhere else, and a phase can be delivered out of that order with nothing to say so. | `list_flow_clusters` **and** `list_flow_connections` since the boundary. Clusters alone do not clear it — the relations are the ordering. Journalling is exempt, or this and CANON-JOURNAL-PHASE deadlock; **since 1.9.0** so are the KG learning calls (`interpret_`, `extract_`, `add_source_to_`, `create_knowledge_graph`). |
 | **CANON-STATUS-SYNC** | Setting a milestone to `delivered`/`approved` with the task tree unread. Measured: eleven milestones delivered in a day against two completed tasks, leaving the tree claiming "pending" for shipped work. | `list_subtasks` / `list_tasks` / `get_task` since the boundary. It CANNOT verify the mapping — milestones and tasks share no key, only a naming convention — so it enforces the one thing it honestly can: that you looked. |
 | **CANON-ACCOUNT** | A turn is ending with phases remaining and no journal entry written this turn. Budget 3 per run, **refunded by progress since 1.6.1 and by a new session since 1.6.4**. | Continue into the next phase's first real step, **or** journal what stopped you, tagged `blocked`. You may not stop silently; you may always stop with an account. |
 | **CANON-READ-BACK-STOP** | Read-back obligations are still open at turn end. Budget 3. ⚠ **Not in `REGISTER`** — so it appears on neither the canon card nor `doctor`. | The same bulk read. |
@@ -246,11 +257,32 @@ cannot hide behind another gate's reason.
 Exceeding a Stop budget writes `run.degraded[gate]` and that gate becomes **permanently advisory for
 that run**. **A Stop gate blocks at most once per turn, by design** — see the honest limits below.
 
+**Reads inside `bulk`, long listings and oversized results — fixed in 1.9.0** (measured 2026-10-09 by a
+probe, now regression-tested). Reads inside a `bulk` **count** for `CANON-ID`, `CANON-BOTTOM-UP`,
+`CANON-FLOW-READ`, `CANON-KG-CONSULT` and `CANON-JOURNAL-PHASE`/`-GRAPH` — there is no need to keep
+gate-clearing reads direct. Before the fix a bulk item's text was only its first line, so `list_subtasks`
+children were never attributed and `complete_task` on a parent with a pending child was **allowed**
+(`CANON-BOTTOM-UP` inverted); reads past inner item 20 were dropped (`CANON-FLOW-READ` refused honest
+work); and a long bulk's inner args were stripped, losing `list_subtasks`' parent. Items now run to the next
+header, and each bulk row carries a compact `rd` summary (reads, listed children, journal flags, KG facts)
+that survives every ledger trim. `CANON-ID` now records **every** id a portal response carries (`seen`
+rows), so row 60 of a 120-row listing is trusted like row 1. And when a result exceeds Claude Code's token
+ceiling and PostToolUse receives only the overflow stub ("… exceeds maximum allowed tokens. Output has been
+saved to `<path>`"), the gate reads the saved file — bounded to 4 MB, only from a `tool-results` folder —
+and settles from it. The real case: a 62 KB `list_flow_clusters` whose owed cluster could never settle.
+
 ### Reports (Stop — never blocks)
 
 **CANON-COMPLETE** names phases/milestones with an empty required field, and missing initiation
 items. **CANON-BULK** counts single writes that should have been one `bulk` call. **CANON-STATUS**
 cross-references milestones whose tasks are all done but whose status was never updated.
+**CANON-KG-LEARN** *(1.9.0)* names a phase boundary crossed this turn without both
+`extract_knowledge_graph` and `interpret_knowledge_graph` since the previous boundary.
+**CANON-KG-GAPS** *(1.9.0)* names an `interpret_knowledge_graph` result that reported gaps — lines under
+"CANDIDATE SURPRISING CONNECTIONS" ending "NO edge between them", plus the count in "ISOLATED NODES (N)" —
+when a phase boundary has passed since and nothing after it turned them into work: no
+`create_task`/`create_subtask` and no journal entry with a "won't fix" line. Canon: graph gaps become tasks
+or a journal "won't fix" line.
 
 These are **advisory by design, not by weakness.** A deny on the fourth single write cannot undo the
 first three; single calls are sometimes right; and completeness is a judgement about content, which
@@ -328,7 +360,8 @@ none  →  ALIGN  →  RUN  →  CLOSED
 
 - **ALIGN** — board-first governs. Stopping for the human is **correct** here. `CANON-BOARD-FIRST`
   is armed; `CANON-ACCOUNT` is inert.
-- **RUN** — canon (b) governs. `CANON-ACCOUNT`, `CANON-JOURNAL-PHASE` and `CANON-TREE-FIRST` arm;
+- **RUN** — canon (b) governs. `CANON-ACCOUNT`, `CANON-JOURNAL-PHASE`, `CANON-JOURNAL-GRAPH`,
+  `CANON-KG-CONSULT` and `CANON-TREE-FIRST` arm;
   `CANON-BOARD-FIRST` goes inert.
 - **CLOSED** — nothing gates.
 

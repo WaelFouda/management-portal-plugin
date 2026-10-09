@@ -68,6 +68,8 @@ and there is nothing to stand down — say that and carry on.
 | `CANON-TREE-FIRST` | implementation edits before tasks + subtasks + a flow cluster + a connection exist |
 | `CANON-BOARD-FIRST` | a brief/proposal/phase/task while the run is in ALIGN and no alignment board exists |
 | `CANON-FLOW-READ` | a portal write after a phase boundary with the flow board unread — clusters AND relations |
+| `CANON-KG-CONSULT` | the first implementation work, and the first portal write after a phase boundary, with no knowledge graph consulted |
+| `CANON-JOURNAL-GRAPH` | the first portal write after a phase boundary whose journal has no "What the graph showed" section |
 | `CANON-STATUS-SYNC` | a milestone set to delivered/approved with the task tree unread |
 
 **Compel an action after the call, or at turn end (PostToolUse / Stop):**
@@ -81,7 +83,8 @@ and there is nothing to stand down — say that and carry on.
 
 **Report only, never refuse or block:** `CANON-COMPLETE` (empty required fields), `CANON-BULK` (single
 calls that should have been one `bulk`), `CANON-STATUS` (a milestone whose tasks are all done but whose
-status is not). Standing these down is harmless and pointless — they only ever print.
+status is not), `CANON-KG-LEARN` (a phase passed without extracting and interpreting the graph),
+`CANON-KG-GAPS` (graph gaps that became neither a task nor a journal "won't fix" line). Standing these down is harmless and pointless — they only ever print.
 
 Use `all` when you do not know which one it was.
 

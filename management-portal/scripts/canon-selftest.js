@@ -105,6 +105,15 @@ function seedSeen(sid, id) {
   gate('post', post(sid, MCP + 'list_tasks', { project_id: id }, 'Task "X" [id: ' + id + ']'));
 }
 
+/**
+ * The graph consult CANON-KG-CONSULT (1.9.0) wants before implementation work and after a
+ * boundary — an empty listing, which settles it for a run with no graph. Cases about OTHER
+ * gates call this so they keep testing what they were written to test.
+ */
+function consultNone(sid) {
+  gate('post', post(sid, MCP + 'list_knowledge_graphs', {}, 'No knowledge graphs found in this workspace.'));
+}
+
 // --- the cases --------------------------------------------------------------
 
 function caseSessionStart() {
@@ -303,7 +312,7 @@ function caseP5() {
   check('refuses the first write after a boundary with no journal', Boolean(denialOf(bad)));
   check('reason names the boundary', (denialOf(bad) || '').includes(UUID_B));
 
-  gate('post', post(sid, MCP + 'create_journal', { folder_id: UUID_C }, 'Journal [id: ' + UUID_A + ']'));
+  gate('post', post(sid, MCP + 'create_journal', { folder_id: UUID_C, content: '<h3>What the graph showed</h3><p>x</p>' }, 'Journal [id: ' + UUID_A + ']'));
   const half = gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A }));
   check('still refuses when written but not read back', Boolean(denialOf(half)));
 
@@ -312,6 +321,9 @@ function caseP5() {
   // an unrelated portal write. Journalling itself stays exempt from it — see that gate.
   gate('post', post(sid, MCP + 'list_flow_clusters', {}, 'clusters'));
   gate('post', post(sid, MCP + 'list_flow_connections', {}, 'connections'));
+  // …and, since 1.9.0, the graph is consulted at the boundary too (CANON-KG-CONSULT); the
+  // journal above already carries its "What the graph showed" section (CANON-JOURNAL-GRAPH).
+  consultNone(sid);
   const good = gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A }));
   check('allows once written AND read back', denialOf(good) === null, denialOf(good) || '');
 }
@@ -429,6 +441,7 @@ function caseP7() {
     ['create_flow_cluster', UUID_C], ['create_flow_connection', UUID_A]]) {
     gate('post', post(sid, MCP + tool, {}, 'Created [id: ' + id + ']'));
   }
+  consultNone(sid); // CANON-KG-CONSULT's own concern, proved in caseKgConsultImplementation
   const good = gate('pre', pre(sid, 'Write', { file_path: src, content: 'x' }));
   check('allows the Write once all four exist', denialOf(good) === null, denialOf(good) || '');
 }
@@ -743,6 +756,9 @@ function caseGapTreeFirstEffect() {
   console.log('\nGAP-2 CANON-TREE-FIRST — a write is a write, whatever carried it');
   const sid = fresh();
   cli(RUN_ARGS);
+  // The graph consult is CANON-KG-CONSULT's concern (it is evaluated after this gate and is
+  // proved in caseKgConsultImplementation); made up front so this case tests TREE-FIRST alone.
+  consultNone(sid);
   const src = path.join(PROJ, 'src.ts');
   const carriers = [
     ['Bash', { command: 'cat > "' + src + '" <<EOF\nx\nEOF' }, 'heredoc redirect'],
@@ -849,10 +865,11 @@ function caseGapBulk() {
     /CANON-JOURNAL-PHASE/.test(jp || ''), jp || '(ALLOWED)');
   const jpOk = denialOf(gate('pre', pre(sid, MCP + 'bulk', {
     calls: [
-      { tool: 'create_journal', arguments: { folder_id: UUID_A, title: 'phase 1' } },
+      { tool: 'create_journal', arguments: { folder_id: UUID_A, title: 'phase 1', content: 'Graph: nothing new this phase.' } },
       { tool: 'list_journals', arguments: { folder_id: UUID_A } },
       { tool: 'list_flow_clusters', arguments: {} },
       { tool: 'list_flow_connections', arguments: {} },
+      { tool: 'list_knowledge_graphs', arguments: {} },
       { tool: 'create_task', arguments: { project_id: UUID_A } },
     ],
   })));
@@ -2476,6 +2493,470 @@ function caseGapCanonHomeDiscovery() {
   }
 }
 
+// --- 1.9.0: the graph is CONSULTED, not only written --------------------------
+
+const UUID_G = 'eeeeeeee-5555-4555-8555-eeeeeeeeeeee';
+const UUID_X = 'ffffffff-6666-4666-8666-ffffffffffff';
+
+/** Everything a Stop hook said, block or advisory. */
+function stopText(res) {
+  if (!res.json) return '';
+  if (res.json.decision === 'block') return res.json.reason || '';
+  return (res.json.hookSpecificOutput && res.json.hookSpecificOutput.additionalContext) || '';
+}
+/** A run in RUN with the decomposition built, so CANON-TREE-FIRST is out of the way. */
+function runWithTree(sid, project) {
+  const open = cli(['run-open', '--client', 'C', '--project', project || 'P', '--state', 'RUN']);
+  seedSeen(sid, UUID_A);
+  for (const [tool, id] of [['create_task', UUID_A], ['create_subtask', UUID_B],
+    ['create_flow_cluster', UUID_C], ['create_flow_connection', UUID_A]]) {
+    gate('post', post(sid, MCP + tool, {}, 'Created [id: ' + id + ']'));
+  }
+  return ((open.stdout || '').match(/r-[0-9a-f]+/) || [])[0];
+}
+/**
+ * The read-only `status --json` snapshot. Used where a case must observe the consult state
+ * several times: every refusal spends the obligation's budget (3), so asking by REFUSAL
+ * would exhaust it and make the later assertions meaningless.
+ */
+function statusOf(sid) {
+  const r = cli(['status', '--json', '--session', sid, '--cwd', PROJ]);
+  try { return JSON.parse((r.stdout || '').trim()); } catch (_) { return {}; }
+}
+function owedNow(sid) { const k = statusOf(sid).kg; return Boolean(k && k.consultOwed); }
+/** Everything a phase boundary owes EXCEPT the graph: journal + read-back + flow board. */
+function boundaryMinusGraph(sid, journalContent) {
+  gate('post', post(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }, 'ok [id: ' + UUID_B + ']'));
+  gate('post', post(sid, MCP + 'create_journal', { folder_id: UUID_C, content: journalContent || '<p>Phase done.</p>' }, 'Journal [id: ' + UUID_C + ']'));
+  gate('post', post(sid, MCP + 'list_journals', { folder_id: UUID_C }, 'entries [id: ' + UUID_C + ']'));
+  gate('post', post(sid, MCP + 'list_flow_clusters', {}, 'clusters'));
+  gate('post', post(sid, MCP + 'list_flow_connections', {}, 'connections'));
+}
+const GRAPH_SECTION = '<h3>What the graph showed</h3><p>The auth cluster has no edge to billing.</p>';
+
+function caseKgConsultImplementation() {
+  console.log('\nCANON-KG-CONSULT — the first implementation write consults a graph');
+  // REPORTED BY THE OWNER, 2026-10-09: the gates made agents WRITE graphs and only asked
+  // for one read at close-out, so nothing an agent did was ever informed by one.
+  const SRC = () => path.join(PROJ, 'feature.ts'); // PROJ changes with every fresh()
+
+  // (0) The card carries EVERY gate — two new rows must not push the debt gates off its end
+  //     (measured: at the old 3000 cap they did, three of them).
+  let sid = fresh();
+  runWithTree(sid, 'Acme');
+  const cardRes = gate('session-start', { session_id: sid, cwd: PROJ, hook_event_name: 'SessionStart' });
+  const card = (cardRes.json && cardRes.json.hookSpecificOutput && cardRes.json.hookSpecificOutput.additionalContext) || '';
+  const missing = require('./canon-gate.js').REGISTER.map((r) => r[0]).filter((id) => !card.includes('· ' + id + ' '));
+  check('the card with a run declared lists every gate, the new two included', !missing.length && !/more gate/.test(card),
+    'missing: ' + missing.join(', ') + ' · len=' + card.length);
+
+  // (1) No graph known to the run: the consult that settles it is a listing.
+  const bad = denialOf(gate('pre', pre(sid, 'Write', { file_path: SRC(), content: 'x' })));
+  check('refuses the first source write with no graph consulted', /CANON-KG-CONSULT/.test(bad || ''), (bad || '(ALLOWED)').slice(0, 160));
+  check('  …and names the exact call that settles it', /list_knowledge_graphs\(search="Acme"\)/.test(bad || ''), bad || '');
+  check('  …and states facts, not orders', !/to clear|you must|run |please |stand-down/i.test(bad || ''), bad || '');
+  check('  …and says create_knowledge_graph is never refused', /create_knowledge_graph is never refused/.test(bad || ''), bad || '');
+  const md = denialOf(gate('pre', pre(sid, 'Write', { file_path: path.join(PROJ, 'NOTES.md'), content: 'x' })));
+  check('a doc write is not implementation work', !/CANON-KG-CONSULT/.test(md || ''), md || '');
+  const outside = denialOf(gate('pre', pre(sid, 'Bash', { command: 'mkdir -p "' + path.join(os.tmpdir(), 'kg-scratch') + '"' })));
+  check('a command whose only target is OUTSIDE the project is not implementation work',
+    !/CANON-KG-CONSULT/.test(outside || ''), outside || '');
+  const commit = denialOf(gate('pre', pre(sid, 'Bash', { command: 'git commit -m "feat"' })));
+  check('a mutating command with no named target IS (git commit)', /CANON-KG-CONSULT/.test(commit || ''), (commit || '(ALLOWED)').slice(0, 120));
+  // The settling read is never refused, and neither is making the graph it then points at.
+  check('the settling list_knowledge_graphs is never refused',
+    denialOf(gate('pre', pre(sid, MCP + 'list_knowledge_graphs', { search: 'Acme' }))) === null);
+  check('create_knowledge_graph is never refused by it',
+    !/CANON-KG-CONSULT/.test(denialOf(gate('pre', pre(sid, MCP + 'create_knowledge_graph', { title: 'Acme' }))) || ''));
+  gate('post', post(sid, MCP + 'list_knowledge_graphs', { search: 'Acme' }, 'No knowledge graphs found in this workspace.'));
+  const good = denialOf(gate('pre', pre(sid, 'Write', { file_path: SRC(), content: 'x' })));
+  check('an EMPTY listing settles it when the run has no graph', !/CANON-KG-CONSULT/.test(good || ''), good || '');
+
+  // (2) The run HAS a graph: a consult must be OF it.
+  const sid2 = fresh();
+  const open2 = runWithTree(sid2, 'Gamma');
+  gate('post', post(sid2, MCP + 'create_knowledge_graph', { title: 'Gamma' }, '✅ Knowledge graph created [id: ' + UUID_G + ']'));
+  const named = denialOf(gate('pre', pre(sid2, 'Write', { file_path: SRC(), content: 'x' })));
+  check('with a run graph, the reason names a consult OF that graph',
+    named && named.includes('semantic_search_knowledge_graph(graph_id="' + UUID_G + '"'), (named || '(ALLOWED)').slice(0, 220));
+  gate('post', post(sid2, MCP + 'list_knowledge_graphs', {}, 'No knowledge graphs found in this workspace.'));
+  check('an empty listing does NOT settle it once the run has a graph',
+    owedNow(sid2), JSON.stringify(statusOf(sid2).kg || {}));
+  gate('post', post(sid2, MCP + 'semantic_search_knowledge_graph', { graph_id: UUID_X, query: 'auth' }, 'hits [id: ' + UUID_X + ']'));
+  check('a consult of an UNRELATED graph does not settle it',
+    owedNow(sid2), JSON.stringify(statusOf(sid2).kg || {}));
+  gate('post', post(sid2, MCP + 'interpret_knowledge_graph', { graph_id: UUID_G }, 'GRAPH: Gamma (id ' + UUID_G + ')'));
+  check('an interpretation WITHOUT a focus does not settle it',
+    owedNow(sid2), JSON.stringify(statusOf(sid2).kg || {}));
+  gate('post', post(sid2, MCP + 'interpret_knowledge_graph', { graph_id: UUID_G, focus: 'what does auth depend on?' }, 'GRAPH: Gamma (id ' + UUID_G + ')'));
+  const settled = denialOf(gate('pre', pre(sid2, 'Write', { file_path: SRC(), content: 'x' })));
+  check('a FOCUSED interpretation of the run graph settles it', !/CANON-KG-CONSULT/.test(settled || ''), settled || '');
+
+  // (3) The run carries the consult: a restarted session or a sub-agent is not refused again.
+  const sid3 = 'sess-kg-restart-' + Math.random().toString(16).slice(2, 8);
+  const restart = denialOf(gate('pre', pre(sid3, 'Write', { file_path: SRC(), content: 'x' })));
+  check('a NEW session against the same run inherits the consult', !/CANON-KG-CONSULT/.test(restart || ''), restart || '');
+  if (open2) {
+    const runRec = JSON.parse(fs.readFileSync(path.join(HOME, 'runs', open2 + '.json'), 'utf8'));
+    check('the run records its graph and when it was consulted',
+      (runRec.kg_ids || []).includes(UUID_G) && Boolean(runRec.kg_consult_at), JSON.stringify({ g: runRec.kg_ids, at: runRec.kg_consult_at }));
+  }
+
+  // (4) The other side: no run, or a run in ALIGN, is never asked for a consult.
+  sid = fresh();
+  check('silent with no run declared', denialOf(gate('pre', pre(sid, 'Write', { file_path: SRC(), content: 'x' }))) === null);
+
+  // (5) A consult inside a bulk counts — direct reads and batched reads are the same read.
+  sid = fresh();
+  runWithTree(sid, 'Delta');
+  gate('post', post(sid, MCP + 'bulk', { calls: [{ tool: 'list_knowledge_graphs', arguments: { search: 'Delta' } }] },
+    'Ran 1/1 call(s); 0 failed.\n[0] list_knowledge_graphs: No knowledge graphs found in this workspace.'));
+  const viaBulk = denialOf(gate('pre', pre(sid, 'Write', { file_path: SRC(), content: 'x' })));
+  check('an empty listing INSIDE a bulk settles it', !/CANON-KG-CONSULT/.test(viaBulk || ''), viaBulk || '');
+
+  // (6) The budget: an obligation that cannot be settled stops refusing after three.
+  sid = fresh();
+  runWithTree(sid, 'Eps');
+  let n = 0;
+  for (let i = 0; i < 4; i++) if (/CANON-KG-CONSULT/.test(denialOf(gate('pre', pre(sid, 'Write', { file_path: SRC(), content: 'x' }))) || '')) n++;
+  check('refuses ' + require('./canon-gate.js').DEBT_BUDGET + ' times, then stands itself down', n === require('./canon-gate.js').DEBT_BUDGET, 'refused ' + n + ' times');
+
+  // (7) The escape is honoured mid-session like every other gate's.
+  sid = fresh();
+  runWithTree(sid, 'Zeta');
+  cli(['stand-down', '--gate', 'CANON-KG-CONSULT', '--reason', 'selftest']);
+  check('stand-down silences it', !/CANON-KG-CONSULT/.test(denialOf(gate('pre', pre(sid, 'Write', { file_path: SRC(), content: 'x' }))) || ''));
+}
+
+function caseKgConsultPhase() {
+  console.log('\nCANON-KG-CONSULT — the first portal write after a phase boundary consults a graph');
+  let sid = fresh();
+  runWithTree(sid, 'P');
+  gate('post', post(sid, MCP + 'create_knowledge_graph', { title: 'P' }, '✅ Knowledge graph created [id: ' + UUID_G + ']'));
+  gate('post', post(sid, MCP + 'semantic_search_knowledge_graph', { graph_id: UUID_G, query: 'plan' }, 'hits [id: ' + UUID_G + ']'));
+  check('(precondition) no refusal before the boundary once consulted',
+    !/CANON-KG-CONSULT/.test(denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A }))) || ''));
+
+  boundaryMinusGraph(sid, GRAPH_SECTION);
+  const bad = denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A })));
+  check('refuses the first portal write after a boundary with no consult since it', /CANON-KG-CONSULT/.test(bad || ''), (bad || '(ALLOWED)').slice(0, 160));
+  check('  …names the boundary', (bad || '').includes(UUID_B));
+  check('  …and the run graph\'s consult', (bad || '').includes('semantic_search_knowledge_graph(graph_id="' + UUID_G + '"'));
+
+  // Its keys, and the KG learning loop, are never refused — by it OR by the phase gates.
+  for (const [tool, args] of [
+    ['interpret_knowledge_graph', { graph_id: UUID_G, focus: 'next phase' }],
+    ['extract_knowledge_graph', { graph_id: UUID_G }],
+    ['add_source_to_knowledge_graph', { graph_id: UUID_G, items: [{ type: 'project', id: UUID_A }] }],
+    ['create_knowledge_graph', { title: 'another' }],
+    ['create_journal', { folder_id: UUID_C, content: 'x' }],
+    ['update_journal', { journal_id: UUID_C, content: GRAPH_SECTION }],
+  ]) {
+    const d = denialOf(gate('pre', pre(sid, MCP + tool, args)));
+    check('after a boundary, ' + tool + ' is not refused by any phase gate',
+      !/CANON-KG-CONSULT|CANON-JOURNAL-GRAPH|CANON-JOURNAL-PHASE|CANON-FLOW-READ/.test(d || ''), (d || '').slice(0, 140));
+  }
+
+  // A consult made BEFORE the boundary does not count for the phase after it.
+  check('the pre-boundary consult did not carry over', /CANON-KG-CONSULT/.test(bad || ''));
+
+  // Batched consult-then-work is the behaviour asked for, in one round trip.
+  const batched = denialOf(gate('pre', pre(sid, MCP + 'bulk', { calls: [
+    { tool: 'semantic_search_knowledge_graph', arguments: { graph_id: UUID_G, query: 'phase 2' } },
+    { tool: 'update_task', arguments: { task_id: UUID_A } },
+  ] })));
+  check('bulk([consult, write]) is allowed', batched === null, batched || '');
+
+  gate('post', post(sid, MCP + 'get_knowledge_graph', { graph_id: UUID_G }, 'Graph [id: ' + UUID_G + ']'));
+  const good = denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A })));
+  check('a consult of the run graph after the boundary clears it', good === null, good || '');
+
+  // The notice on the next prompt names the call before the turn's first action.
+  sid = fresh();
+  runWithTree(sid, 'Notice');
+  const r = gate('prompt', { session_id: sid, cwd: PROJ, hook_event_name: 'UserPromptSubmit', prompt: 'continue' });
+  const ctx = (r.json && r.json.hookSpecificOutput && r.json.hookSpecificOutput.additionalContext) || '';
+  check('the prompt notice names the consult', /CANON-KG-CONSULT/.test(ctx) && /list_knowledge_graphs\(search="Notice"\)/.test(ctx), ctx.slice(0, 300));
+}
+
+function caseJournalGraph() {
+  console.log('\nCANON-JOURNAL-GRAPH — the phase journal says what the graph showed');
+  let sid = fresh();
+  runWithTree(sid, 'P');
+  gate('post', post(sid, MCP + 'list_knowledge_graphs', {}, 'No knowledge graphs found in this workspace.'));
+  boundaryMinusGraph(sid, '<p>Phase done. Learnt nothing worth noting.</p>');
+  gate('post', post(sid, MCP + 'list_knowledge_graphs', {}, 'No knowledge graphs found in this workspace.'));
+  const bad = denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A })));
+  check('refuses a post-boundary write when the journal lacks the section', /CANON-JOURNAL-GRAPH/.test(bad || ''), (bad || '(ALLOWED)').slice(0, 160));
+  check('  …states facts, not orders', !/to clear|you must|run |please |stand-down/i.test(bad || ''), bad || '');
+  check('update_journal (the key) is not refused',
+    denialOf(gate('pre', pre(sid, MCP + 'update_journal', { journal_id: UUID_C, content: GRAPH_SECTION }))) === null);
+  gate('post', post(sid, MCP + 'update_journal', { journal_id: UUID_C, content: GRAPH_SECTION }, 'Updated [id: ' + UUID_C + ']'));
+  gate('post', post(sid, MCP + 'get_journal', { journal_id: UUID_C }, 'Journal [id: ' + UUID_C + ']'));
+  const good = denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A })));
+  check('adding "What the graph showed" clears it', good === null, good || '');
+
+  // The ledger records THAT the section exists — never a word of it.
+  const shards = fs.readdirSync(path.join(HOME, 'sessions')).map((f) => fs.readFileSync(path.join(HOME, 'sessions', f), 'utf8')).join('\n');
+  check('the journal\'s words never reach the ledger', !/auth cluster|worth noting/.test(shards));
+  check('…but the structural fact does', /"graph_section":1/.test(shards));
+
+  // `graph:` as a plain line works too, and so does a section written inside a bulk.
+  sid = fresh();
+  runWithTree(sid, 'P2');
+  gate('post', post(sid, MCP + 'list_knowledge_graphs', {}, 'No knowledge graphs found in this workspace.'));
+  boundaryMinusGraph(sid, 'Phase 2 done.\nGraph: the payments community is isolated.');
+  gate('post', post(sid, MCP + 'list_knowledge_graphs', {}, 'No knowledge graphs found in this workspace.'));
+  const plain = denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A })));
+  check('a line opening "Graph:" counts as the section', plain === null, plain || '');
+
+  sid = fresh();
+  runWithTree(sid, 'P3');
+  gate('post', post(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }, 'ok [id: ' + UUID_B + ']'));
+  const body = 'Ran 5/5 call(s); 0 failed.\n'
+    + '[0] list_knowledge_graphs: No knowledge graphs found in this workspace.\n'
+    + '[1] create_journal: Journal entry created [id: ' + UUID_C + ']\n'
+    + '[2] list_journals: entries [id: ' + UUID_C + ']\n'
+    + '[3] list_flow_clusters: clusters\n'
+    + '[4] list_flow_connections: connections';
+  gate('post', post(sid, MCP + 'bulk', { calls: [
+    { tool: 'list_knowledge_graphs', arguments: {} },
+    { tool: 'create_journal', arguments: { folder_id: UUID_C, content: GRAPH_SECTION } },
+    { tool: 'list_journals', arguments: { folder_id: UUID_C } },
+    { tool: 'list_flow_clusters', arguments: {} },
+    { tool: 'list_flow_connections', arguments: {} },
+  ] }, body));
+  const vb = denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A })));
+  check('the whole boundary settled INSIDE one bulk clears every phase gate', vb === null, vb || '');
+  // Pre-side: the same batch with the write at the end is allowed before it runs.
+  sid = fresh();
+  runWithTree(sid, 'P4');
+  gate('post', post(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }, 'ok [id: ' + UUID_B + ']'));
+  const pb = denialOf(gate('pre', pre(sid, MCP + 'bulk', { calls: [
+    { tool: 'list_knowledge_graphs', arguments: {} },
+    { tool: 'create_journal', arguments: { folder_id: UUID_C, content: GRAPH_SECTION } },
+    { tool: 'list_journals', arguments: { folder_id: UUID_C } },
+    { tool: 'list_flow_clusters', arguments: {} },
+    { tool: 'list_flow_connections', arguments: {} },
+    { tool: 'update_task', arguments: { task_id: UUID_A } },
+  ] })));
+  check('bulk([consult, journal+section, read, flow reads, write]) is allowed before it runs', pb === null, pb || '');
+}
+
+function caseKgAdvisories() {
+  console.log('\nCANON-KG-LEARN and CANON-KG-GAPS — advise, never block');
+  const gapsResp = 'GRAPH: P (id ' + UUID_G + ')\n\nCANDIDATE SURPRISING CONNECTIONS (computed over the 40 highest-degree nodes):\n'
+    + '  - Auth [c1] ~ Billing [c2] cosine 0.71 — semantically close, different communities, NO edge between them\n'
+    + '  - Cache [c1] ~ Queue [c3] cosine 0.66 — semantically close, different communities, NO edge between them\n\n'
+    + 'ISOLATED NODES (1):\n  Legacy importer';
+
+  // KG-LEARN: a boundary this turn, nothing extracted or interpreted.
+  let sid = fresh();
+  runWithTree(sid, 'P');
+  gate('prompt', { session_id: sid, cwd: PROJ, prompt: 'go' });
+  gate('post', post(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }, 'ok [id: ' + UUID_B + ']'));
+  let s = stopText(gate('stop', stop(sid)));
+  check('a phase passed with no extract/interpret is advised', /CANON-KG-LEARN/.test(s), s.slice(0, 200));
+  check('  …and it never blocks on its own account', !/^\[portal-canon CANON-KG-LEARN/.test(blockOf(gate('stop', stop(sid))) || ''));
+
+  sid = fresh();
+  runWithTree(sid, 'P');
+  gate('prompt', { session_id: sid, cwd: PROJ, prompt: 'go' });
+  gate('post', post(sid, MCP + 'extract_knowledge_graph', { graph_id: UUID_G }, 'Extracted [id: ' + UUID_G + ']'));
+  gate('post', post(sid, MCP + 'interpret_knowledge_graph', { graph_id: UUID_G, focus: 'next' }, 'GRAPH: P (id ' + UUID_G + ')\nISOLATED NODES (0):\n  none'));
+  gate('post', post(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }, 'ok [id: ' + UUID_B + ']'));
+  s = stopText(gate('stop', stop(sid)));
+  check('extract + interpret in the phase: no KG-LEARN', !/CANON-KG-LEARN/.test(s), s.slice(0, 200));
+  check('an interpretation with NO gaps: no KG-GAPS', !/CANON-KG-GAPS/.test(s), s.slice(0, 200));
+
+  // KG-GAPS: gaps reported, a boundary passes, nothing filed.
+  sid = fresh();
+  runWithTree(sid, 'P');
+  gate('prompt', { session_id: sid, cwd: PROJ, prompt: 'go' });
+  gate('post', post(sid, MCP + 'extract_knowledge_graph', { graph_id: UUID_G }, 'Extracted [id: ' + UUID_G + ']'));
+  gate('post', post(sid, MCP + 'interpret_knowledge_graph', { graph_id: UUID_G, focus: 'gaps' }, gapsResp));
+  gate('post', post(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }, 'ok [id: ' + UUID_B + ']'));
+  s = stopText(gate('stop', stop(sid)));
+  check('gaps left unfiled across a boundary are advised', /CANON-KG-GAPS/.test(s), s.slice(0, 200));
+  check('  …with the count the interpretation reported (2 pairs + 1 isolated)', /reported 3 gap/.test(s), s.slice(0, 300));
+
+  sid = fresh();
+  runWithTree(sid, 'P');
+  gate('prompt', { session_id: sid, cwd: PROJ, prompt: 'go' });
+  gate('post', post(sid, MCP + 'interpret_knowledge_graph', { graph_id: UUID_G, focus: 'gaps' }, gapsResp));
+  gate('post', post(sid, MCP + 'create_task', { title: 'Link auth to billing' }, 'Created [id: ' + UUID_X + ']'));
+  gate('post', post(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }, 'ok [id: ' + UUID_B + ']'));
+  s = stopText(gate('stop', stop(sid)));
+  check('a task filed after the interpretation satisfies KG-GAPS', !/CANON-KG-GAPS/.test(s), s.slice(0, 200));
+
+  sid = fresh();
+  runWithTree(sid, 'P');
+  gate('prompt', { session_id: sid, cwd: PROJ, prompt: 'go' });
+  gate('post', post(sid, MCP + 'bulk', { calls: [{ tool: 'interpret_knowledge_graph', arguments: { graph_id: UUID_G, focus: 'gaps' } }] },
+    'Ran 1/1 call(s); 0 failed.\n[0] interpret_knowledge_graph: ' + gapsResp));
+  gate('post', post(sid, MCP + 'create_journal', { folder_id: UUID_C, content: "<p>Legacy importer: won't fix, retired next quarter.</p>" }, 'J [id: ' + UUID_C + ']'));
+  gate('post', post(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }, 'ok [id: ' + UUID_B + ']'));
+  s = stopText(gate('stop', stop(sid)));
+  check('a journal "won\'t fix" line satisfies KG-GAPS (gaps read from inside a bulk)', !/CANON-KG-GAPS/.test(s), s.slice(0, 200));
+  sid = fresh();
+  runWithTree(sid, 'P');
+  gate('prompt', { session_id: sid, cwd: PROJ, prompt: 'go' });
+  gate('post', post(sid, MCP + 'bulk', { calls: [{ tool: 'interpret_knowledge_graph', arguments: { graph_id: UUID_G, focus: 'gaps' } }] },
+    'Ran 1/1 call(s); 0 failed.\n[0] interpret_knowledge_graph: ' + gapsResp));
+  gate('post', post(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }, 'ok [id: ' + UUID_B + ']'));
+  s = stopText(gate('stop', stop(sid)));
+  check('gaps reported INSIDE a bulk are seen', /CANON-KG-GAPS/.test(s), s.slice(0, 200));
+}
+
+function caseGapBulkReadsCount() {
+  console.log('\nGAP reads inside `bulk` count for every gate — measured invisible on 1.8.0');
+  const U = (n) => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
+  const P = UUID_A, C1 = UUID_C, C2 = 'dddddddd-4444-4444-8444-dddddddddddd';
+
+  // (A) CANON-BOTTOM-UP was INVERTED: children are on the lines after the item header.
+  let sid = fresh();
+  seedSeen(sid, P);
+  gate('post', post(sid, MCP + 'bulk', { calls: [{ tool: 'list_subtasks', arguments: { parent_task_id: P } }] },
+    'Ran 1/1 call(s); 0 failed.\n[0] list_subtasks: Found 2 subtask(s) for task ' + P + ':\n'
+    + '- [pending] a (priority: medium) | pos: 1 [id: ' + C1 + ']\n- [completed] b | pos: 2 [id: ' + C2 + ']'));
+  const open = denialOf(gate('pre', pre(sid, MCP + 'complete_task', { task_id: P })));
+  check('a child listed INSIDE a bulk keeps its parent open', /CANON-BOTTOM-UP/.test(open || '') && (open || '').includes(C1), (open || '(ALLOWED)').slice(0, 200));
+  gate('post', post(sid, MCP + 'complete_task', { task_id: C1 }, 'done [id: ' + C1 + ']'));
+  gate('post', post(sid, MCP + 'complete_task', { task_id: C2 }, 'done [id: ' + C2 + ']'));
+  check('…and completing the listed children releases it', denialOf(gate('pre', pre(sid, MCP + 'complete_task', { task_id: P }))) === null);
+
+  // (E) A long bulk whose row lost its inner args still knows whose children it listed.
+  sid = fresh();
+  seedSeen(sid, P);
+  const c2 = [], l2 = ['Ran 12/12 call(s); 0 failed.'];
+  for (let i = 0; i < 11; i++) {
+    c2.push({ tool: 'list_tasks', arguments: { project_id: UUID_B } });
+    l2.push('[' + i + '] list_tasks: ' + Array.from({ length: 8 }, (_, k) => '[id: ' + U(i * 10 + k) + ']').join(' '));
+  }
+  c2.push({ tool: 'list_subtasks', arguments: { parent_task_id: P } });
+  l2.push('[11] list_subtasks: Found 1 subtask(s) for task ' + P + ':\n- [completed] b [id: ' + C2 + ']');
+  gate('post', post(sid, MCP + 'bulk', { calls: c2 }, l2.join('\n')));
+  gate('post', post(sid, MCP + 'complete_task', { task_id: C2 }, 'done [id: ' + C2 + ']'));
+  const e = denialOf(gate('pre', pre(sid, MCP + 'complete_task', { task_id: P })));
+  check('list_subtasks in a bulk whose row was trimmed still counts', e === null, (e || '').slice(0, 200));
+
+  // (C) Reads past inner item 20 used to vanish with the slice.
+  sid = fresh();
+  cli(RUN_ARGS);
+  seedSeen(sid, P);
+  gate('post', post(sid, MCP + 'update_proposal_milestone', { milestone_id: C1, status: 'delivered' }, 'ok [id: ' + C1 + ']'));
+  gate('post', post(sid, MCP + 'create_journal', { folder_id: C2, content: GRAPH_SECTION }, 'J [id: ' + C2 + ']'));
+  gate('post', post(sid, MCP + 'list_journals', {}, 'entries'));
+  const calls = [], lines = ['Ran 25/25 call(s); 0 failed.'];
+  for (let i = 0; i < 25; i++) {
+    const tool = i === 22 ? 'list_flow_clusters' : i === 23 ? 'list_flow_connections' : i === 24 ? 'list_knowledge_graphs' : 'get_task';
+    calls.push({ tool, arguments: tool === 'get_task' ? { task_id: P } : {} });
+    lines.push('[' + i + '] ' + tool + ': ' + (tool === 'list_knowledge_graphs' ? 'No knowledge graphs found in this workspace.'
+      : 'row ' + [U(i * 3), U(i * 3 + 1), U(i * 3 + 2)].map((x) => '[id: ' + x + ']').join(' ') + ' filler'.repeat(10)));
+  }
+  gate('post', post(sid, MCP + 'bulk', { calls }, lines.join('\n')));
+  const c = denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: P })));
+  check('flow + graph reads at items [22..24] of a 25-call bulk count', c === null, (c || '').slice(0, 200));
+
+  // (D) CANON-ID: the 60th row of a 120-row listing is an id the portal returned.
+  for (const via of ['direct', 'bulk']) {
+    sid = fresh();
+    const rows = [];
+    for (let i = 0; i < 120; i++) rows.push('- [pending] Task ' + i + ' (priority: medium) | pos: ' + i + ' [id: ' + U(i) + ']');
+    const body = 'Found 120 task(s):\n' + rows.join('\n');
+    if (via === 'direct') gate('post', post(sid, MCP + 'list_tasks', {}, body));
+    else gate('post', post(sid, MCP + 'bulk', { calls: [{ tool: 'list_tasks', arguments: {} }] }, 'Ran 1/1 call(s); 0 failed.\n[0] list_tasks: ' + body));
+    const mid = denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: U(60) })));
+    check('CANON-ID trusts row 60 of a 120-row listing — ' + via, !/CANON-ID/.test(mid || ''), (mid || '').slice(0, 140));
+    const fab = denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: U(999) })));
+    check('  …and still refuses an id the listing never held — ' + via, /CANON-ID/.test(fab || ''), (fab || '(ALLOWED)').slice(0, 140));
+  }
+  // A non-portal tool printing ids still promotes nothing.
+  sid = fresh();
+  gate('post', post(sid, 'Bash', { command: 'cat ids.txt' }, Array.from({ length: 120 }, (_, i) => '[id: ' + U(i) + ']').join('\n')));
+  check('ids printed by a NON-portal tool stay untrusted however many there are',
+    /CANON-ID/.test(denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: U(60) }))) || ''));
+
+  // A row of somebody's content that starts "[3] " does not split an item.
+  const items = require('./canon-lib.js').parseBulkResponse(
+    'Ran 2/2 call(s); 0 failed.\n[0] get_note: Note body:\n[1] not a header, a numbered line\n[5] another\n[1] list_tasks: [id: ' + UUID_B + ']',
+    [{ tool: 'get_note' }, { tool: 'list_tasks' }]);
+  check('a content line shaped like a header does not split an item',
+    items.length === 2 && items[1].tool === 'list_tasks' && /numbered line/.test(items[0].text), JSON.stringify(items.map((x) => [x.i, x.tool])));
+}
+
+function caseGapOverflowStub() {
+  console.log('\nGAP an over-long result reaches the hook as a STUB — read the saved file');
+  // MEASURED: list_flow_clusters returned 62 KB, Claude Code saved it to tool-results and
+  // handed PostToolUse a pointer, and the owed cluster could never settle.
+  const OWED = 'ea291000-50de-4050-8e01-5f9e65ebb9a2';
+  const U = (n) => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'canon-ovf-')), 'tool-results');
+  fs.mkdirSync(dir, { recursive: true });
+  const listing = (withOwed) => {
+    const rows = [];
+    for (let i = 0; i < 400; i++) {
+      if (withOwed && i === 260) rows.push("- Cluster 'Owed' | tasks (0) | color: rgba(0,0,0,0.1) [id: " + OWED + ']');
+      rows.push("- Cluster 'C" + i + "' | tasks (2): " + U(i) + ' | color: rgba(99,102,241,0.15) | description: filler to make this listing long [id: ' + U(5000 + i) + ']');
+    }
+    return 'Found ' + rows.length + ' cluster(s):\n' + rows.join('\n');
+  };
+  const stub = (file, chars) => 'Error: result (' + chars.toLocaleString('en-US') + ' characters across 401 lines) exceeds maximum allowed tokens. '
+    + 'Output has been saved to ' + file + '.\nFormat: Plain text\n- For targeted searches (find a line, locate a string): use grep on the file directly.';
+
+  const good = path.join(dir, 'mcp-portal-list_flow_clusters-1789007773774.txt');
+  fs.writeFileSync(good, listing(true));
+  check('(precondition) the saved listing is over 60 KB', fs.statSync(good).size > 60000, String(fs.statSync(good).size));
+  let sid = fresh();
+  gate('post', post(sid, MCP + 'create_flow_cluster', {}, "Cluster 'Owed' created with ID " + OWED));
+  gate('post', post(sid, MCP + 'list_flow_clusters', {}, stub(good, fs.statSync(good).size)));
+  let r = gate('stop', stop(sid));
+  check('the owed cluster settles from the SAVED FILE behind the stub', !/CANON-READ-BACK/.test(blockOf(r) || ''), (blockOf(r) || '').slice(0, 200));
+
+  // Content blocks carrying the stub, and a JSON-format saved file, are the same case.
+  const jfile = path.join(dir, 'mcp-portal-list_flow_clusters-1789007773775.json');
+  fs.writeFileSync(jfile, JSON.stringify([{ type: 'text', text: listing(true) }]));
+  sid = fresh();
+  gate('post', post(sid, MCP + 'create_flow_cluster', {}, "Cluster 'Owed' created with ID " + OWED));
+  const p = post(sid, MCP + 'list_flow_clusters', {}, null);
+  p.tool_response = [{ type: 'text', text: stub(jfile, 70000).replace('Plain text', 'JSON with schema: [{type: string, text: string}]') }];
+  gate('post', p);
+  r = gate('stop', stop(sid));
+  check('a JSON-format saved file, behind a content-block stub, settles too', !/CANON-READ-BACK/.test(blockOf(r) || ''), (blockOf(r) || '').slice(0, 200));
+
+  // The other side: a saved file WITHOUT the id leaves the debt standing.
+  const bad = path.join(dir, 'mcp-portal-list_flow_clusters-1789007773776.txt');
+  fs.writeFileSync(bad, listing(false));
+  sid = fresh();
+  gate('post', post(sid, MCP + 'create_flow_cluster', {}, "Cluster 'Owed' created with ID " + OWED));
+  gate('post', post(sid, MCP + 'list_flow_clusters', {}, stub(bad, fs.statSync(bad).size)));
+  r = gate('stop', stop(sid));
+  check('a saved file WITHOUT the owed id still owes', /CANON-READ-BACK/.test(blockOf(r) || ''), (blockOf(r) || '(no block)').slice(0, 200));
+
+  // Only a runtime tool-results file is ever opened.
+  const elsewhere = path.join(os.tmpdir(), 'canon-ovf-elsewhere-' + Math.random().toString(16).slice(2) + '.txt');
+  fs.writeFileSync(elsewhere, listing(true));
+  sid = fresh();
+  gate('post', post(sid, MCP + 'create_flow_cluster', {}, "Cluster 'Owed' created with ID " + OWED));
+  gate('post', post(sid, MCP + 'list_flow_clusters', {}, stub(elsewhere, 62000)));
+  r = gate('stop', stop(sid));
+  check('a path outside a tool-results folder is never read', /CANON-READ-BACK/.test(blockOf(r) || ''), (blockOf(r) || '(no block)').slice(0, 200));
+
+  // A bulk behind a stub: its items, its reads and its ids all come from the file.
+  const bfile = path.join(dir, 'mcp-portal-bulk-1789007773777.txt');
+  fs.writeFileSync(bfile, 'Ran 2/2 call(s); 0 failed.\n[0] list_subtasks: Found 1 subtask(s) for task ' + UUID_A + ':\n- [pending] x [id: ' + UUID_C + ']\n'
+    + '[1] list_flow_clusters: ' + listing(true));
+  sid = fresh();
+  seedSeen(sid, UUID_A);
+  gate('post', post(sid, MCP + 'create_flow_cluster', {}, "Cluster 'Owed' created with ID " + OWED));
+  gate('post', post(sid, MCP + 'bulk', { calls: [{ tool: 'list_subtasks', arguments: { parent_task_id: UUID_A } }, { tool: 'list_flow_clusters', arguments: {} }] },
+    stub(bfile, fs.statSync(bfile).size)));
+  const bu = denialOf(gate('pre', pre(sid, MCP + 'complete_task', { task_id: UUID_A })));
+  check('a bulk behind a stub still lists its children (CANON-BOTTOM-UP)', /CANON-BOTTOM-UP/.test(bu || '') && (bu || '').includes(UUID_C), (bu || '(ALLOWED)').slice(0, 200));
+  r = gate('stop', stop(sid));
+  check('…and still settles the owed cluster', !/CANON-READ-BACK/.test(blockOf(r) || ''), (blockOf(r) || '').slice(0, 200));
+}
+
 function run() {
   console.log('portal-canon selftest — every gate proved on BOTH sides');
   const cases = [caseSessionStart, caseP1, caseP2, caseP3, caseP3Latch, caseP4, caseP5,
@@ -2486,7 +2967,9 @@ function run() {
     caseGapLedgerLineAlwaysParses, caseGapTreeSurvivesTheSession, caseGapQuotedAngleIsNotARedirect, caseGapBoardAndStatusEnforced, caseGapSessionRefundsTheBudget, caseGapProgressKeepsTheNetUp, caseGapBriefReadBackIsDischargeable, caseGapBoundaryInsideABulk, caseGapSettleCallTakesThatId, caseGapSettleCallTakesTheOwnerId, caseGapChainedBoardBulk, caseGapReArmIsReachable, caseGapUuidFragmentIsNotAnId, caseGapReadBackLongList, caseGapReadBackPastTheHeadCap, caseStatusJson, caseGapCanonHomeDiscovery,
     caseGapIdProvenance, caseGapScope,
     caseDebtReadBack, caseDebtSeams, caseDebtThisTurn, caseDebtCloseout, caseGapSourceKindsFromItems, caseDebtDegrades, caseDebtColdReturn,
-    caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath];
+    caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath,
+    caseKgConsultImplementation, caseKgConsultPhase, caseJournalGraph, caseKgAdvisories,
+    caseGapBulkReadsCount, caseGapOverflowStub];
   for (const c of cases) {
     try { c(); } catch (e) { fail++; failures.push(c.name + ' threw: ' + e.message); console.log('  FAIL  ' + c.name + ' threw: ' + e.message); }
   }

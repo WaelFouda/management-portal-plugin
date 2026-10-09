@@ -47,11 +47,21 @@ READ → GAP → ALIGN(board-first) → BREAK DOWN → BUILD → TEST → VERIFY
 **Never fabricate ids** — every id comes from a `list_*`/`get_*` read or a `create_*` response. Never
 invent, guess, pattern-match, abbreviate, or reuse-from-memory an id. No id? Read for it.
 
+**Consult the knowledge graph every phase — it is built to be read.** At run start and at each phase
+start, before the first implementation work or portal write, consult it:
+`semantic_search_knowledge_graph(graph_id, query:"<the decision this phase is about to take>")`,
+`interpret_knowledge_graph` with a `focus`, or `get_knowledge_graph` (no graph yet? an empty
+`list_knowledge_graphs(search:"<project>")`, then `create_knowledge_graph`). Each phase,
+`extract_knowledge_graph` + `interpret_knowledge_graph`; journal it under **"What the graph showed"**; and
+turn every gap it reports into a task or a journal "won't fix" line. Gated by `CANON-KG-CONSULT` and
+`CANON-JOURNAL-GRAPH`; full loop in `reference.md` §2b (e).
+
 ## Some of this is meant to be ENFORCED, not advised — `canon-gates.md`
 
 Parts of the discipline above are designed to stop being reminders. The **canon gates** are hooks that
 `REFUSE` a tool call outright (a fabricated id, completing a parent before its subtasks, editing
-implementation files before the task tree exists) or `BLOCK` a turn until a write has been read back or a
+implementation files before the task tree exists, starting a phase without consulting the knowledge
+graph) or `BLOCK` a turn until a write has been read back or a
 mid-run turn gives an account of itself. Others (bulk efficiency, status discipline, completeness) are
 **reported at turn end and never refuse anything** — advisory by design, not by weakness.
 
@@ -192,7 +202,7 @@ payloads. As of 1.8.0, **three gates read ENFORCED** — `CANON-ID`, `CANON-READ
 for those, no live refusal has been observed, so "armed" is the claim, not "proven here". The Team Chat
 turn-end ABSENT gate is the other thing in this plugin observed live to refuse.
 
-Three things to know now, so you are not surprised mid-run:
+Four things to know now, so you are not surprised mid-run:
 
 - **No card, no gates.** A live session opens with `[portal-canon v1 · alive · token <hex>]`. Hooks
   fail open and silently on crash and timeout, so its absence is the only signal you get.
@@ -202,6 +212,9 @@ Three things to know now, so you are not surprised mid-run:
 - **If a gate is blocking work it cannot un-block:** type `/portal-stand-down`, or run
   `node "<CLAUDE_PLUGIN_ROOT>/scripts/canon-gate.js" stand-down --gate <ID|all> --reason "…"`. Both
   take effect immediately, mid-session. That invocation is exempt from every gate.
+- **Reads inside `bulk` count.** Since 1.9.0 a gate-clearing read batched into a `bulk` clears
+  `CANON-ID`, `CANON-BOTTOM-UP`, `CANON-FLOW-READ`, `CANON-KG-CONSULT` and the journal gates exactly as a
+  direct one does — batch them.
 
 The commands that carry the canon: **`/portal-project`** (full initiation under a client + project),
 **`/portal-continue`** (resume autonomously — no confirmation between phases), and

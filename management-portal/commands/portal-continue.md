@@ -39,6 +39,14 @@ opens one in state **RUN**.
 **Typing this command is the alignment.** The run moves ALIGN → RUN, `CANON-BOARD-FIRST` stands down, and
 canon (b) turns on. Nobody has to say "continue" again after this.
 
+**Then, once the run's context is loaded, consult the knowledge graph before the first decision or
+implementation write.** `list_knowledge_graphs(search:"<project>")` finds the project's graph. If one
+exists, `semantic_search_knowledge_graph(graph_id, query)` or `interpret_knowledge_graph(graph_id,
+focus:"<what you are about to decide>")` on it. If none exists, `create_knowledge_graph` with its sources
+(the run-log folder, notes, boards, tag query, project, tasks, related graphs, repos) so every later phase
+has one. `CANON-KG-CONSULT` refuses the first implementation work and the first portal write until a graph
+has been consulted; an empty list counts, and `create_knowledge_graph` is never refused.
+
 If the path does not resolve, use the absolute `CANON_GATE_PATH` from the canon card at the top of this
 session. If there is no canon card, the gates are not running here — say so in one line and follow the
 canon below by hand.
@@ -69,24 +77,39 @@ For each phase, in order, and without pausing between them:
 1. **Read first** — `get_proposal_detail(project_id)`, `list_tasks`, `list_subtasks`, `list_flow_clusters`,
    `list_flow_connections`. One `bulk`, one round trip. The flow board's clusters and relations are real
    intent; read them every time, not once at the start.
-2. **Build** on a branch, never on the auto-deploying branch. Commit each step.
-3. **Test end-to-end, including UI/UX.** Run the app in the preview panel, drive the real interface, and
+2. **Consult the graph about this phase's decision** — `semantic_search_knowledge_graph` or
+   `interpret_knowledge_graph(focus:"<the decision this phase takes>")`, before the phase's first write.
+   `CANON-KG-CONSULT` refuses the first implementation work and the first portal write after each boundary
+   until it sees one.
+3. **Build** on a branch, never on the auto-deploying branch. Commit each step.
+4. **Test end-to-end, including UI/UX.** Run the app in the preview panel, drive the real interface, and
    **read the console** — check for errors and warnings and fix what you find. A type-check that passes is
    not a test, and "it compiles" is not delivery. The gates cannot see whether your testing was thorough;
    they can only see that you ran something. This one is on you.
-4. **Verify by reading the record back.** After every write, call the mapped `get_*`/`list_*` and confirm
+5. **Verify by reading the record back.** After every write, call the mapped `get_*`/`list_*` and confirm
    the field you wrote is actually there. `CANON-READ-BACK` compels this at the next tool call and again at
    turn end, and it tells you the exact `bulk` read that clears it.
-5. **Update status** (canon (c)) — `complete_task` bottom-up through the leaves, then the parent, then
+6. **Update status** (canon (c)) — `complete_task` bottom-up through the leaves, then the parent, then
    `update_proposal_milestone(status:"delivered")`, then `update_proposal_phase(status:"completed")`.
    A milestone whose tasks are all done but whose status still says otherwise is reported at turn end.
-6. **Journal the phase and read it back** (canon (d), §5).
-7. **Update the knowledge graph and read it back** — `extract_knowledge_graph(graph_id)` (never
-   `regenerate_*`, which destroys the nodes and edges first), then `interpret_knowledge_graph`, then
-   `get_knowledge_graph` / `semantic_search_knowledge_graph`. Say what changed in the graph.
-8. **Go straight into the next phase.** Do not stop to announce that you are about to.
+7. **Learn from the graph** — `extract_knowledge_graph(graph_id)` (never `regenerate_*`, which destroys
+   the nodes and edges first), then `interpret_knowledge_graph(focus:"<the next phase>")`. `CANON-KG-LEARN`
+   reports a phase that passed without both. Neither `CANON-JOURNAL-PHASE` nor `CANON-FLOW-READ` refuses
+   these learning calls after a boundary.
+8. **Journal the phase and read it back** (canon (d), §5) — with a **"What the graph showed"** section, plus
+   what was learnt and what must be returned to. `CANON-JOURNAL-GRAPH` refuses the first write after the
+   boundary until the entry has one (a heading or line with that phrase, or a line starting `graph:`);
+   `update_journal` adds it.
+9. **Re-read the flow board** — `list_flow_clusters` + `list_flow_connections`.
+10. **Gaps become tasks** — every gap the interpretation reports ("CANDIDATE SURPRISING CONNECTIONS" with no
+    edge, "ISOLATED NODES") becomes a `create_task`/`create_subtask`, or a journal line saying "won't fix"
+    and why (it can go in step 8's entry), by the next boundary. `CANON-KG-GAPS` reports the ones left open.
+    This comes after steps 8–9 because the phase gates refuse a `create_task` until the journal and the
+    flow board have been handled.
+11. **Go straight into the next phase.** Do not stop to announce that you are about to.
 
-Use `bulk` for every group of calls you already know you are making (canon (f)).
+Use `bulk` for every group of calls you already know you are making (canon (f)). Reads inside `bulk` count
+for every gate.
 
 ## 4. When every phase is done — the summary board
 

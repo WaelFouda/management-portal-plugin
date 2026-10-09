@@ -76,11 +76,17 @@ is the same either way; the gates only make it non-optional.
 The run opens in state **ALIGN**. While it is in ALIGN, `CANON-BOARD-FIRST` refuses a brief, a proposal, a
 phase or a task until an alignment board exists.
 
-1. `create_board(title:"<PROJECT> — alignment")`
-2. `create_board_block` for a `callout`/`heading`/`text` framing, **plus** `create_board_block(type:"mermaid")`
+1. **Consult the knowledge graph before the first decision.** `list_knowledge_graphs(search:"<PROJECT>")`
+   (and the client name). If a graph exists, ask it about the work —
+   `semantic_search_knowledge_graph(graph_id, query)` or
+   `interpret_knowledge_graph(graph_id, focus:"<what this run is deciding>")` — and let what it shows shape
+   the board. If none exists, `create_knowledge_graph` now, with the sources that already exist (§5), so
+   every later phase has one to consult.
+2. `create_board(title:"<PROJECT> — alignment")`
+3. `create_board_block` for a `callout`/`heading`/`text` framing, **plus** `create_board_block(type:"mermaid")`
    for the shape of the work, **plus** a chart where a number carries the argument.
-3. `read_board(board_id)` — the verifying read.
-4. **Present the board and STOP for the human.** This is not a violation of "never stop between phases".
+4. `read_board(board_id)` — the verifying read.
+5. **Present the board and STOP for the human.** This is not a violation of "never stop between phases".
    Board-first governs the *initiation* of new work; canon (b) governs the phases inside an already-approved
    plan. Stopping here is the design.
 
@@ -130,24 +136,31 @@ Create it once, at the start:
 create_journal_folder(name:"<PROJECT> — run log")
 ```
 
-Then, **after every phase**, in one `bulk`:
+Then, **after every phase** — once `extract_knowledge_graph` + `interpret_knowledge_graph(focus:"<next
+phase>")` have run (§5) — in one `bulk`:
 
 - `create_journal(folder_id:<that folder>, title:"<phase> — <what happened>", content:"<rich HTML>",
   project_id:<project>, tags:["phase","<phase name>"], logged_at:"<today, YYYY-MM-DD>")` — what was done,
-  the **lessons learnt**, and **anything that must be returned to**.
+  a **"What the graph showed"** section, the **lessons learnt**, and **anything that must be returned to**.
 - and **read it back**: `list_journals(folder_id:…)` or `get_journal(log_id:…)` / `search_journals`.
+- then `list_flow_clusters` + `list_flow_connections`, and straight into the next phase.
 
 Both halves. `CANON-JOURNAL-PHASE` refuses the first portal write after a phase boundary when either the
-write or the read-back is missing, and it names which half it could not find.
+write or the read-back is missing, and it names which half it could not find. Neither it nor
+`CANON-FLOW-READ` refuses the graph-learning calls (`extract`/`interpret`/`add_source_to_knowledge_graph`/
+`create_knowledge_graph`) after a boundary — they come first. `CANON-JOURNAL-GRAPH` refuses the same way
+when the phase entry has no "What the graph showed" section (a heading or line with that phrase, or a line
+starting `graph:`); `update_journal` adds it.
 
 `logged_at` is when the entry is **about**. Omit it and the entry files itself under today, and every
 date query afterwards is wrong with no error to tell you.
 
-## 5. Canon (e) — the knowledge graph, built and read back
+## 5. Canon (e) — the knowledge graph, consulted every phase
 
-Create it once the structure exists, and update it as the run goes:
+§2 step 1 found the project's graph or created it. Once the structure exists, source it and keep it current:
 
-1. `create_knowledge_graph(title:"<PROJECT> — knowledge graph", description:…)`
+1. `create_knowledge_graph(title:"<PROJECT> — knowledge graph", description:…)` — at run start (§2), only
+   when none exists.
 2. `add_source_to_knowledge_graph(graph_id, items:[…])` — one call, sources spanning **all** of:
    - `{type:"journal_folder", id:<the "<PROJECT> — run log" folder>}` — the folder and its subfolders
    - `{type:"note", id:<each related note>}`
@@ -173,6 +186,25 @@ Create it once the structure exists, and update it as the run goes:
 5. **Read it back**: `get_knowledge_graph(graph_id)` or `semantic_search_knowledge_graph`.
 
 Treat an edge below 0.6 confidence as a hypothesis. Check it against the record before you build on it.
+
+The graph is read **per phase**, not only at close-out:
+
+- **Phase start** — before the phase's first write, ask the graph about the decision the phase is about to
+  take: `semantic_search_knowledge_graph(graph_id, query)` or `interpret_knowledge_graph(graph_id,
+  focus:"<that decision>")`. `CANON-KG-CONSULT` refuses the first implementation work (a project source
+  write or a mutating command) and the first portal write after each boundary until the run's graph has been
+  consulted (`get_knowledge_graph` also counts; an `interpret` needs a `focus`). With no graph for the
+  project, an empty `list_knowledge_graphs`/`search_knowledge_graphs` counts and `create_knowledge_graph` is
+  never refused.
+- **Phase end, in this order** — `extract_knowledge_graph` + `interpret_knowledge_graph(focus:"<next
+  phase>")` → the journal entry with its "What the graph showed" section, read back (§4) →
+  `list_flow_clusters` + `list_flow_connections` → the next phase. `CANON-KG-LEARN` reports a phase that
+  passed without the extract + interpret.
+- **Gaps become tasks** — every gap an interpretation reports ("CANDIDATE SURPRISING CONNECTIONS" with no
+  edge, "ISOLATED NODES") becomes a `create_task`/`create_subtask`, or a journal line saying "won't fix" and
+  why, by the next boundary. `CANON-KG-GAPS` reports the ones left open.
+
+Reads inside `bulk` count for every gate, these included.
 
 ## 6. Canon (f) — use `bulk`
 
