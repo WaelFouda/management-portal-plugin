@@ -1185,6 +1185,9 @@ async function snoozeNudge($: EngineInterface): Promise<void> {
 // The command launcher — a button for every command the plugin ships, chosen by preset
 // =========================================================================================
 
+/** Rows the hover detail area keeps reserved under the command list (border included). */
+const DETAIL_ROWS = 6
+
 const MOD_COMMANDS: CommandInfo[] = [
   { name: 'portal-cockpit', description: 'Open the run cockpit: plan, phases, milestones, tasks with progress bars, done vs remaining.', argumentHint: '[project-id | gates | graph | board | settings]', needsArgs: false, source: 'mod' },
   { name: 'portal-gates', description: 'Open the gate control panel: every canon gate armed or stood down, with re-arm and stand-down buttons.', argumentHint: null, needsArgs: false, source: 'mod' },
@@ -1317,20 +1320,33 @@ async function commandsBody($: EngineInterface, els: Els, cols: number, desktop:
   shown.forEach((c) => {
     const open = () => { void update($, launcherA, (x) => ({ ...x, form: { name: c.name, args: '' } })) }
     out.push(
-      <Box key={'row-' + c.name} flexDirection="row" columnGap={1}>
+      <Box key={'row-' + c.name} flexDirection="row" columnGap={1} hover={{ scope: 'cmd-' + c.name }}>
         <Button key={'cmd-' + c.name} label={`/${c.name}`} variant={c.name === 'portal-continue' ? 'primary' : 'secondary'}
           onPress={() => { if (c.needsArgs) open(); else void runCommand($, c, '') }} />
         {c.argumentHint && !c.needsArgs ? <Button key={'args-' + c.name} label="…" plain onPress={open} /> : null}
         <Text key={'desc-' + c.name} dimColor wrap="truncate-end">{clip(c.description, Math.max(10, cols - c.name.length - 12))}</Text>
-        {desktop ? (
-          <Box position="absolute" top={1} left={2} display="none" hover={{ display: 'flex' }} flexDirection="column" borderStyle="round" paddingX={1}>
-            <Text key={'tip-t-' + c.name} bold>{`/${c.name}${c.argumentHint ? '  ' + c.argumentHint : ''}`}</Text>
-            <Text key={'tip-d-' + c.name} wrap="wrap">{c.description}</Text>
-          </Box>
-        ) : null}
       </Box>,
     )
   })
+  // Hover help, 1.9.1: no floating card. A floating card has no opaque background on the Desktop
+  // (measured: it garbled the rows under it), so the hovered command's full usage and description
+  // are swapped into a FIXED detail area under the list instead — space reserved, nothing overlaps,
+  // nothing jumps. Each row lights its own hover scope; only that command's entry is revealed.
+  if (shown.length) {
+    out.push(
+      <Box key="c-detail" flexDirection="column" height={DETAIL_ROWS} borderStyle="single" borderDimColor paddingX={1}>
+        <Box flexDirection="column" position="absolute" top={DETAIL_ROWS - 3} left={0}>
+          <Text key="c-detail-hint" dimColor wrap="truncate-end">point at a command for its full usage</Text>
+        </Box>
+        {shown.map((c) => (
+          <Box key={'detail-' + c.name} flexDirection="column" position="absolute" top={0} left={0} display="none" hover={{ scope: 'cmd-' + c.name, display: 'flex' }}>
+            <Text key={'detail-t-' + c.name} bold wrap="truncate-end">{`/${c.name}${c.argumentHint ? '  ' + c.argumentHint : ''}`}</Text>
+            <Text key={'detail-d-' + c.name} wrap="wrap">{clip(c.description, Math.max(40, (cols - 6) * (DETAIL_ROWS - 4)))}</Text>
+          </Box>
+        ))}
+      </Box>,
+    )
+  }
   if (!shown.length) out.push(<Text key="c-none" dimColor>This preset shows no commands — press "Choose commands…".</Text>)
   out.push(
     <Box key="c-acts" flexDirection="row" columnGap={1}>

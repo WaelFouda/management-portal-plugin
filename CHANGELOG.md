@@ -3,6 +3,22 @@
 Releases before 1.8.0 are described in the commit history (`plugin vX.Y.Z: …`) and in the
 "Known failure modes" section of [`management-portal/README.md`](management-portal/README.md).
 
+## 1.9.1 — 2026-10-09
+
+### Mods
+
+- **Fixed: the command launcher's hover help garbled the list on the Desktop.** 1.9.0 drew each command's
+  usage as a floating card over the rows beneath it; the Desktop paints that card with no background, so
+  its text and the rows under it overlapped unreadably (owner's screenshot). The floating card is gone.
+  Pointing at a command now lights that row's hover scope and swaps its full usage
+  (`/portal-cockpit  [project-id | gates | graph | board | settings]`) and description into a **fixed detail
+  area under the list** — space reserved, nothing overlaps, nothing jumps. Each row still shows its
+  description inline, truncated.
+- Measured on the Desktop in 1.9.0: a launcher button really runs the command (`ran
+  /management-portal:portal-rearm`), so the plugin-namespaced spelling is the one the engine accepts there.
+- Tests: `claude plugin test management-portal` — 45 (a new one holds the launcher to no floating card
+  and one scoped detail entry per command, on the terminal and the Desktop).
+
 ## 1.9.0 — 2026-10-09
 
 ### Canon gates — the knowledge graph is consulted every phase, not only written

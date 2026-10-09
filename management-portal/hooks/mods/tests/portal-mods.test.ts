@@ -567,6 +567,38 @@ describe('command launcher', () => {
     await ui.unmount()
   })
 
+  test('hover help never overlaps the list: each row lights a scope, the full usage shows in a fixed detail area', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    world(on, QUIET)
+    await start($, clock)
+    await $.command.run({ command: 'portal-commands', args: '', origin: { kind: 'composer' } } as any)
+    for (const surface of SURFACES) {
+      const ui: any = await $.ui.mount(PANE(surface))
+      const tree = await ui.drawn()
+      const boxes: any[] = []
+      const walk = (n: any, inRow: boolean) => {
+        if (!n || typeof n !== 'object') return
+        if (Array.isArray(n)) { n.forEach((c) => walk(c, inRow)); return }
+        if (n.type === 'Box') boxes.push({ ...n, inRow })
+        const row = inRow || (n.type === 'Box' && /^row-/.test(String(n.key || n.props?.key || '')))
+        walk(n.children, row)
+      }
+      walk(tree, false)
+      // No floating card inside a command row (1.9.0 drew one; it had no background on the Desktop).
+      expect(boxes.filter((b) => b.inRow && b.props?.position === 'absolute').length).toBe(0)
+      const row = boxes.find((b) => (b.key || b.props?.key) === 'row-portal-continue')
+      expect(row.hover.scope).toBe('cmd-portal-continue')
+      const area = boxes.find((b) => (b.key || b.props?.key) === 'c-detail')
+      expect(area.props.height).toBeGreaterThan(3)
+      const entry = boxes.find((b) => (b.key || b.props?.key) === 'detail-portal-continue')
+      expect(entry.props.display).toBe('none')
+      expect(entry.hover).toEqual({ scope: 'cmd-portal-continue', display: 'flex' })
+      expect(JSON.stringify(entry)).toContain('/portal-continue  [run id or project name]')
+      expect(JSON.stringify(entry)).toContain('Resume the autonomous run and keep going')
+      await ui.unmount()
+    }
+  })
+
   test('a command the engine will not run from a mod lands in the prompt box instead', async ($, on) => {
     const clock = mock.clock(on, { now: T0 })
     const w = world(on, QUIET, { commandRuns: false })
