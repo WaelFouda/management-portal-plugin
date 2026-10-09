@@ -299,6 +299,8 @@ export type Plan = {
   remaining: PlanItem[]
   overdue: PlanItem[]
   orphanTasks: PlanTask[]
+  /** Phases other than the current one whose only open milestones are in review (0-based). */
+  awaitingReview: number[]
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
@@ -341,9 +343,19 @@ export function buildPlan(p: Proposal, tasks: readonly TaskRow[] | null, today: 
     return { name: ph.name, id: ph.id, index, deadline: ph.deadline ?? null, milestones, progress: pr, frac,
       isCurrent: false, isDone, overdue: !isDone && isOverdue(ph.deadline, 'pending', today) }
   })
-  let current = phases.findIndex((ph) => !ph.isDone)
+  // The CURRENT phase is where work is happening, not merely the first one not finished: a phase
+  // whose only open milestones are in review is waiting on the client, not on the run.
+  //   1. the latest phase with a milestone in progress;
+  //   2. else the earliest phase with a milestone not started;
+  //   3. else the earliest phase still waiting on a review; 4. else the last phase.
+  const has = (ph: PlanPhase, c: StatusClass) => ph.milestones.some((m) => m.cls === c)
+  let current = -1
+  for (let i = phases.length - 1; i >= 0 && current < 0; i--) if (has(phases[i]!, 'active')) current = i
+  if (current < 0) current = phases.findIndex((ph) => has(ph, 'pending'))
+  if (current < 0) current = phases.findIndex((ph) => !ph.isDone)
   if (current < 0) current = Math.max(0, phases.length - 1)
   if (phases[current]) phases[current]!.isCurrent = true
+  const awaitingReview = phases.filter((ph, i) => i !== current && !ph.isDone && !has(ph, 'active') && !has(ph, 'pending') && has(ph, 'review')).map((ph) => ph.index)
   const allMs = phases.flatMap((ph) => ph.milestones).filter((m) => m.cls !== 'cancelled')
   const msProg = progress(allMs.map((m) => m.status))
   const withHours = allMs.filter((m) => typeof m.hours === 'number' && (m.hours as number) > 0)
@@ -389,7 +401,7 @@ export function buildPlan(p: Proposal, tasks: readonly TaskRow[] | null, today: 
     if (item.overdue) overdue.push(item)
   }
   return {
-    title: p.title, status: p.status, phases, current, pct, reviewPct, milestones: msProg,
+    title: p.title, status: p.status, phases, current, awaitingReview, pct, reviewPct, milestones: msProg,
     tasks: progress(tk.map((t) => t.status)), subtasks: progress(subs.map((s) => s.status)),
     hours, cost, completed, remaining, overdue, orphanTasks,
   }
@@ -508,7 +520,7 @@ export function runContext(s: CanonStatus | null, plan: Plan | null): string | n
   if (s?.run) lines.push(`Portal run ${s.run.id} is ${s.run.state}${s.run.project_id ? ` on project ${s.run.project_id}` : ''}.`)
   if (plan) {
     const ph = plan.phases[plan.current]
-    lines.push(`Plan "${plan.title}": ${plan.pct}% delivered; phase ${plan.current + 1}/${plan.phases.length}${ph ? ` "${ph.name}" (${ph.progress.done}/${ph.progress.total} milestones)` : ''}; ${plan.remaining.filter((r) => r.kind === 'milestone').length} milestone(s) remaining${plan.overdue.length ? `, ${plan.overdue.length} overdue` : ''}.`)
+    lines.push(`Plan "${plan.title}": ${plan.pct}% delivered; current phase ${plan.current + 1}/${plan.phases.length}${ph ? ` "${ph.name}" (${phaseCounts(ph)})` : ''}; ${plan.remaining.filter((r) => r.kind === 'milestone').length} milestone(s) remaining${plan.overdue.length ? `, ${plan.overdue.length} overdue` : ''}${plan.awaitingReview.length ? `; awaiting review: phase ${plan.awaitingReview.map((i) => i + 1).join(', ')}` : ''}.`)
   }
   if (s) {
     const o = owedNow(s)
@@ -970,4 +982,14 @@ export function presetCommands(list: readonly CommandInfo[], presets: Record<str
 export function presetNameOk(name: string): boolean {
   const n = String(name || '').trim()
   return n.length > 0 && n.length <= 32 && !BUILTIN_PRESETS.includes(n) && /^[\w .-]+$/.test(n)
+}
+
+/** `2 delivered · 1 in review · 0 pending` for a phase. */
+export function phaseCounts(ph: { milestones: { cls: StatusClass }[] }): string {
+  const n = (c: StatusClass) => ph.milestones.filter((m) => m.cls === c).length
+  const parts = [`${n('done')} delivered`]
+  if (n('review')) parts.push(`${n('review')} in review`)
+  if (n('active')) parts.push(`${n('active')} in progress`)
+  parts.push(`${n('pending')} pending`)
+  return parts.join(' · ')
 }

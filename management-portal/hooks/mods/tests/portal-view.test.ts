@@ -105,8 +105,9 @@ describe('the plan', () => {
     const plan = buildPlan(parseProposalDetail(PROPOSAL)!, tasks, '2026-10-09')
     expect(plan.pct).toBe(25) // 4 of 16 planned hours (C's 4 are cancelled)
     expect(plan.reviewPct).toBe(50)
-    expect(plan.current).toBe(0)
-    expect(plan.phases[0]!.isCurrent).toBe(true)
+    expect(plan.current).toBe(1) // One has only a review left; Two has work not started
+    expect(plan.phases[1]!.isCurrent).toBe(true)
+    expect(plan.awaitingReview).toEqual([0])
     expect(plan.phases[0]!.overdue).toBe(true)
     expect(plan.milestones).toEqual({ done: 1, review: 1, total: 3, pct: 33 })
     expect(plan.subtasks.total).toBe(2)
@@ -133,9 +134,10 @@ describe('the plan', () => {
     const plan = buildPlan(parseProposalDetail(PROPOSAL)!, null, '2026-10-09')
     const s = { v: 1, mode: 'on', run: { id: 'r-1', state: 'RUN', project_id: 'p' }, gates: { total: 15, armed: 14, stood: [{ id: 'CANON-X', why: null }] },
       owed: [], settle: null, journal: null, closeout: [], debt: null }
-    expect(statusLine(s, plan)).toBe('r-1 RUN · Demo · phase 1/2 · ██▒▒▒▒░░ 25% · gates 14/15 armed (1 stood down)')
+    expect(statusLine(s, plan)).toBe('r-1 RUN · Demo · phase 2/2 · ██▒▒▒▒░░ 25% · gates 14/15 armed (1 stood down)')
     const ctx = runContext(s, plan)!
-    expect(ctx).toContain('phase 1/2 "One"')
+    expect(ctx).toContain('current phase 2/2 "Two" (0 delivered · 1 pending)')
+    expect(ctx).toContain('awaiting review: phase 1')
     expect(ctx).toContain('Stood down: CANON-X')
   })
 })

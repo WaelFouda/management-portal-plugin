@@ -50,7 +50,7 @@ import {
   parseSchedulingRequests, parseSubtasks, parseTasks, parseTimerEntry, portalServersFrom, portalServersFromBreakdown,
   progressMark, resultText, round1, rowLine, runContext, settlePrompt, splitMcpName, statusLine, svgBar, svgPlan,
   textBar, todayOf, wakePrompt, NUDGE_GRACE_MS,
-  BUILTIN_PRESETS, PRESET_RUN, builtinPresets, parseCommandFile, presetCommands, presetNameOk,
+  BUILTIN_PRESETS, PRESET_RUN, builtinPresets, phaseCounts, parseCommandFile, presetCommands, presetNameOk,
 } from './portal-view'
 
 const PANE = 'portal-cockpit'
@@ -470,20 +470,29 @@ async function planBody($: EngineInterface, els: Els, x: { s: CanonStatus | null
     if (plan.overdue.length) lines.push(T('overdue', `OVERDUE: ${plan.overdue.map((o) => `${o.title} (${o.due})`).join(' · ')}`, { color: 'red' }))
     // Phases → milestones → (current phase) subtasks.
     lines.push(T('h-phases', 'PHASES', { bold: true }))
+    if (plan.awaitingReview.length) lines.push(T('awaiting', `awaiting review (only in-review milestones left): phase ${plan.awaitingReview.map((k) => k + 1).join(', ')}`, { color: 'yellow' }))
     plan.phases.forEach((ph, i) => {
       const bar = textBar(ph.isDone ? 1 : ph.progress.total ? ph.progress.done / ph.progress.total : 0, 10, ph.progress.total ? ph.progress.review / ph.progress.total : 0)
       const mark = ph.isCurrent ? '▸' : ph.isDone ? '✓' : '·'
       lines.push(T('ph' + i, `${mark} ${i + 1}. ${clip(ph.name, Math.max(12, cols - 34))}  ${desktop ? '' : bar + ' '}${ph.progress.done}/${ph.progress.total}${ph.deadline ? ' · due ' + ph.deadline : ''}${ph.overdue ? ' · OVERDUE' : ''}`,
         { bold: ph.isCurrent, color: ph.isCurrent ? 'cyan' : ph.overdue ? 'red' : undefined, dim: ph.isDone && !ph.isCurrent }))
+      if (ph.isCurrent) lines.push(T('phc' + i, `   current phase · ${phaseCounts(ph)}`, { color: 'cyan', dim: true }))
       const showMs = ph.isCurrent || view.showDone || !ph.isDone
       if (!showMs) return
       ph.milestones.forEach((m, j) => {
         const sub = m.task && m.task.sub && m.task.sub.total ? ` · subtasks ${m.task.sub.done}/${m.task.sub.total} ${textBar(m.task.sub.done / m.task.sub.total, 8)}` : ''
         const money_ = typeof m.cost === 'number' ? ` · ${money(m.cost)}` : ''
         const hrs = typeof m.hours === 'number' ? ` · ${round1(m.hours)}h` : ''
-        lines.push(T(`ms${i}-${j}`, `   ${glyph(m.status)} ${clip(m.name, Math.max(12, cols - 50))} · ${m.status}${hrs}${money_}${sub}${m.overdue ? ' · OVERDUE' : ''}`,
-          { color: colorOf(m.cls) ?? (m.overdue ? 'red' : undefined), dim: m.cls === 'done' }))
-        if (ph.isCurrent && m.task && m.task.subtasks && m.cls !== 'done') {
+        const meta = `${m.status}${hrs}${money_}${sub}${m.overdue ? ' · OVERDUE' : ''}`
+        const msColor = m.overdue && m.cls !== 'done' ? 'red' : colorOf(m.cls)
+        if (cols < 90) {
+          // Narrow (a docked Desktop pane is ~50 columns): the name gets its own line, the facts the next.
+          lines.push(T(`ms${i}-${j}`, `   ${glyph(m.status)} ${m.name}`, { color: msColor, dim: m.cls === 'done' }))
+          lines.push(T(`msm${i}-${j}`, `      ${meta}`, { dim: true }))
+        } else {
+          lines.push(T(`ms${i}-${j}`, `   ${glyph(m.status)} ${clip(m.name, Math.max(16, cols - 60))} · ${meta}`, { color: msColor, dim: m.cls === 'done' }))
+        }
+        if ((ph.isCurrent || view.showDone) && m.task && m.task.subtasks && m.cls !== 'done') {
           m.task.subtasks.forEach((st, k) => {
             if (!view.showDone && classOf(st.status) === 'done') return
             lines.push(T(`st${i}-${j}-${k}`, `       ${glyph(st.status)} ${clip(st.title, Math.max(10, cols - 12))}`, { dim: classOf(st.status) === 'done', color: colorOf(classOf(st.status)) }))

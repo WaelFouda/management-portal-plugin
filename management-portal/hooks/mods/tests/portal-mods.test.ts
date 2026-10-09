@@ -162,7 +162,7 @@ describe('status line', () => {
     const line = w.statuses.filter(Boolean).pop() || ''
     expect(line).toContain('r-ecfd1cb2 RUN')
     expect(line).toContain('HelmOS Live Voice')
-    expect(line).toContain('phase 1/2')
+    expect(line).toContain('phase 2/2')
     expect(line).toMatch(/█+[▒░]+ 50%/) // 10 of 20 planned hours delivered
     expect(line).toContain('gates 12/15 armed (3 stood down)')
     expect(line).toContain('owes 2 read-backs')
@@ -191,9 +191,12 @@ describe('run cockpit — the plan with progress bars', () => {
       const ui: any = await $.ui.mount(PANE(surface))
       expect(await ui.find({ type: 'Text', text: /HelmOS Live Voice — GPT-Live speech-to-speech · accepted/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /milestones 1\/3 done \(1 in review\) · tasks 1\/3 · subtasks 1\/2 · hours 10\/20 · \$400\/\$800 delivered/ })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /▸ 1\. Backend .*1\/2 · due 2026-10-08 · OVERDUE/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /· 1\. Backend .*1\/2 · due 2026-10-08 · OVERDUE/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /▸ 2\. Clients .*0\/1/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /current phase · 0 delivered · 1 pending/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /awaiting review .*phase 1$/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /◐ Ego delegation · in_review · 5h · \$200 · subtasks 1\/2/ })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /○ Spoken progress/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /○ Web live mode/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /REMAINING · 2 milestone\/task\(s\), 1 subtask\(s\)/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /COMPLETED · 1 milestone\/task\(s\)/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /OVERDUE: Ego delegation \(2026-10-08\)/ })).toBeDefined()
@@ -529,7 +532,7 @@ describe('compact run context', () => {
     const block = r.blocks.find((b: any) => b.name === 'portalRun')!
     expect(r.blocks[0]!.name).toBe('currentDate')
     expect(block.text).toContain('Portal run r-ecfd1cb2 is RUN')
-    expect(block.text).toContain('phase 1/2 "Backend"')
+    expect(block.text).toContain('current phase 2/2 "Clients"')
     expect(block.text.split('\n').length).toBeLessThan(7)
   })
 })
