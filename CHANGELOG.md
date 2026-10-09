@@ -3,6 +3,35 @@
 Releases before 1.8.0 are described in the commit history (`plugin vX.Y.Z: …`) and in the
 "Known failure modes" section of [`management-portal/README.md`](management-portal/README.md).
 
+## 1.9.0 — unreleased
+
+### Mods — the plan, the gates and every command, on screen
+
+- **Fixed: the cockpit said "not connected" in the Desktop Code tab.** There the portal is a claude.ai
+  connector named by a UUID (`mcp__560b8d0b-…__*`); the plugin's own server needs `/mcp` sign-in, and
+  with tool search on `$.tool.list()` does not list deferred connector tools. Discovery now takes the server
+  Claude's own portal calls ran on (`classic.PostToolUse` names it), the one remembered from an earlier
+  session, the context breakdown's `/mcp` names, then the plugin's server — and the plan fills from the
+  portal results Claude reads when the mod cannot call any server itself.
+- **Run cockpit** (`/portal-cockpit [project-id]`, opens by itself on a wide Desktop window): phases →
+  milestones → tasks → subtasks with progress bars (SVG on the Desktop, text in the terminal), the current
+  phase, Completed vs Remaining, deadlines and overdue, hours and cost delivered vs planned, owed read-backs,
+  stood-down gates. Tabs: Plan · Commands · Gates · Graph · Board · Settings.
+- **Status line:** run · phase n/N · overall % with a mini bar · gates armed/stood · owed reads.
+- **Gate control panel** (`/portal-gates`): every gate from `canon-gate.js doctor`, with Stand down (reason
+  required), Re-arm and Re-arm all — run through `canon-gate.js` on the person's press only.
+- **Command launcher** (`/portal-commands`): a button for every `commands/*.md` (read at run time), the
+  description as a hover card, argument forms for `<required>` hints, and named presets kept in `$.store`.
+- **Band:** owed read-back, idle-run countdown, timer on the current task (start/stop on press).
+- **Cards** gain progress bars and cover boards, graph interpretations, inbox and DMs; **Board preview** and
+  **Graph panel** (hubs, gaps, bridges) fill from observed results; **notifications** toast new unread DMs,
+  inbox mail, approvals and tasks due; **compact run context** adds a few lines to the first message.
+- **Idle-run nudge:** a RUN-state run with milestones remaining, idle N minutes (default 10) with no
+  background work → toast, 60-second countdown, one "continue the run" prompt. Default on only for runs
+  started with `/portal-continue`; pauses after three nudges without progress.
+- Still additive and never enforcement. Tests: `claude plugin test management-portal` — 44 tests, terminal
+  and desktop surfaces.
+
 ## 1.8.0 — 2026-10-06
 
 ### Mods — optional extras for Claude Code ≥ 2.1.287

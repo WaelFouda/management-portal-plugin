@@ -322,7 +322,7 @@ stores that an entry happened and never a word of what it said.**
 | `team-chat-reachability` **skill** | Teaches how to stay reachable on a channel watch roster; the re-arm rule. |
 | `team-chat-watcher` **subagent** | The one you **spawn**: the background loop that performs the blocking `await_my_turn` wait. Spawning it is what actually makes you reachable. |
 | `/rearm-watch` **command** | What a **human types** to join a channel and keep watching it, or to read the roster by hand. |
-| **mod** (`hooks/mods/`, Claude Code ≥ 2.1.287) | Optional extras: the canon status line, `/portal-cockpit`, the gate band, result cards and the Team Chat wake-up. **Never enforcement** — see *Mods* below. |
+| **mod** (`hooks/mods/`, Claude Code ≥ 2.1.287) | Optional extras: the run cockpit (plan with progress bars), status line, gate panel, command launcher with presets, band, result cards, notifications, Team Chat wake-up and the idle-run nudge. **Never enforcement** — see *Mods* below. |
 | `scripts/watch-alarm.js` | The ABSENT alarm and turn-end gate. Node, no dependencies. **Needs one manual step — below.** |
 | **watch recorder + preflight hooks** | PostToolUse records that this machine really waited; SessionStart says when the alarm is not armed. |
 
@@ -362,22 +362,50 @@ plugin's own server if it is signed in, then looks for any server exposing the p
 search defers them, in the context breakdown. With no signed-in portal server the cockpit says so; the
 canon half still works, because it reads only local files.
 
+### What 1.9.0 adds to the mod
+
+**Why 1.8.0 showed "not connected" in the Desktop app.** In the Desktop Code tab the portal is reached
+through a **claude.ai connector named by a UUID** (tools appear as `mcp__560b8d0b-…__get_proposal_detail`),
+not through the plugin's own server, which needs `/mcp` sign-in there. 1.8.0 tried the plugin's server,
+then `$.tool.list()` (which, with tool search on, lists only the tools already loaded — the connector's are
+deferred) and found nothing. 1.9.0 discovers the server in this order and remembers the one that answered:
+the server **Claude's own portal calls ran on** (`classic.PostToolUse` names it), the one that worked in an
+earlier session, the plugin's own server, the session's tool list, and the context breakdown's `/mcp` names.
+And when the mod cannot call any server itself, the cockpit fills from the portal results Claude reads
+(`get_proposal_detail`, `list_tasks`, `list_subtasks`), with a button that asks Claude to read the plan.
+
+| What | Where | What it does |
+|---|---|---|
+| **Run cockpit** (`/portal-cockpit [project-id]`) | a pane; opens by itself on a wide Desktop window when a run has a project | Tabs **Plan · Commands · Gates · Graph · Board · Settings**. **Plan:** the proposal's phases → milestones → tasks → subtasks with **progress bars** (one SVG chart on the Desktop, text bars `███▒▒░░` in the terminal: done, in review, remaining), the **current phase** highlighted, deadlines and **OVERDUE**, **hours and cost delivered vs planned**, **Remaining** and **Completed** lists, what the canon owes and which gates are stood down. Refreshes every 2 min and after each portal write. |
+| **Status line** | under the prompt | `<run> RUN · <project> · phase n/N · ██▒▒░░ 62% · gates 14/15 armed (1 stood down) · owes 2 read-backs`. |
+| **Gate control panel** (`/portal-gates`) | the Gates tab | Every gate (from `canon-gate.js doctor`) ARMED or STOOD DOWN; **Stand down** (a reason is required) / **Re-arm** / **Re-arm all** run `canon-gate.js stand-down|re-arm` exactly as `/portal-stand-down` and `/portal-rearm` do — only when you press. |
+| **Command launcher** (`/portal-commands`) | the Commands tab | A button for **every command in `commands/*.md`** (read at run time, so new commands appear by themselves) plus the mod's own; the frontmatter `description` beside each and as a hover card on the Desktop. A command whose `argument-hint` has `<required>` arguments asks for them first; optional ones have a `…` button. **Choose commands…** picks which show and saves them as a **named preset** (built in: *Run*, *Team Chat*, *All*); presets and the active one persist in `$.store`. When the engine will not run a command from a mod, it is placed in the prompt box for Enter. |
+| **Band** | above the prompt | What is owed now (button: ask Claude to run the settling read), the **idle-run countdown** (*Continue now* / *Not now*), and the **timer** on the current task (*Start timer* / *Stop timer*). |
+| **Cards** | in the transcript | As 1.8.0, plus a **progress bar**, status colours, and cards for `read_board`, `interpret_knowledge_graph`, `read_inbox` and `read_dm_conversations`; once Claude has used the Desktop connector its rows get cards too. `open in HelmOS` links appear when you set the web address (`/portal-cockpit url https://…`). |
+| **Board preview / Graph panel** | Board and Graph tabs | The last `create_board`/`read_board` as a block tree; the last `interpret_knowledge_graph` as **hubs, gaps (close in meaning, no edge), bridges, communities, isolated nodes**, with buttons that ask Claude to interpret the project's graph or act on the gaps. |
+| **Notifications** | toasts | Every 3 min: new unread DMs, unread inbox mail, scheduling approvals waiting, tasks due today or overdue — names and subjects only, never a message body. The first poll is a silent baseline. |
+| **Idle-run nudge** | toast + band + a new turn | A run in **RUN** state with milestones remaining, idle **N minutes** (default 10) with no subagent, background shell or monitor running → a toast, a 60-second countdown in the band, then **one** "continue the run" prompt. **On by default only for runs started with `/portal-continue`** (`/portal-cockpit nudge on|off|auto|<minutes>`, or the Settings tab); after three nudges with no canon progress it pauses. This closes the documented limit that no hook can restart an idle session. |
+| **Compact run context** | the first message | A few lines (`portalRun`): the run, the current phase, milestones remaining, what is owed, what is stood down — added beside the canon card, never instead of it. |
+
 ### Privacy — exactly what the mod reads and writes
 
-- **Reads, local:** the canon snapshot from `node scripts/canon-gate.js status --json` — a **read-only**
-  mode added in 1.8.0 that reuses the gate's own fold over the same ledger the hooks write; it never
-  appends, never closes a stale run and never deletes an expired debt. Plus `CLAUDE_CONFIG_DIR`,
-  `USERPROFILE` or `HOME` to find the plugin's data folder.
-- **Reads, portal (READS ONLY):** `get_proposal_detail` and `list_tasks` for the run's project when you
-  open or refresh the cockpit; `read_channel_messages` for the one watched channel while the wake-up is on.
-  It calls no other portal tool and **never writes to the portal**.
-- **Writes:** only its own session values (`$.state`) and its own `$.store` entries — the three toggles,
-  the watched channel and agent name, and up to 200 seen message ids. It writes nothing to the canon data
-  folder and nothing to the project.
+- **Reads, local:** the canon snapshot from `node scripts/canon-gate.js status --json` (read-only) and the
+  gate list from `canon-gate.js doctor` (read-only); the plugin's own `commands/*.md` frontmatter for the
+  launcher; `CLAUDE_CONFIG_DIR`, `USERPROFILE` or `HOME` to find the plugin's data folder.
+- **Reads, portal:** `get_proposal_detail`, `list_tasks` and `list_subtasks` for the run's project;
+  `read_channel_messages` for the one watched channel; `read_dm_conversations`, `read_inbox` and
+  `list_scheduling_requests` for notifications; the results of portal calls **Claude** made in the session.
+- **Writes, portal — only on your press:** `start_timer` / `stop_timer` from the timer button. Nothing else.
+- **Writes, local — only on your press:** the canon stand-down sentinels, through `canon-gate.js stand-down`
+  and `re-arm`, from the Gates tab. Nothing else in the canon data folder, nothing in the project.
+- **Prompts it submits:** the settling read (band button), the idle-run nudge, the Team Chat wake-up, and the
+  launcher's commands — each one names the mod as its sender. Chat and inbox text is never relayed into a prompt.
+- **Its own state:** `$.state` values and `$.store` entries — toggles, nudge settings, the HelmOS address,
+  the portal server that answered, the watched channel, seen notification ids, the running timer, presets.
 
 ### Turning it off
 
-`/portal-cockpit rich off`, `/portal-cockpit band off` and `/portal-cockpit watch off` turn the parts off
+`/portal-cockpit rich off`, `band off`, `watch off`, `notify off`, `autoopen off` and `nudge off` turn the parts off
 and are remembered across sessions. To drop the mod entirely, disable the plugin or run an older Claude
 Code; the gates are unaffected either way.
 

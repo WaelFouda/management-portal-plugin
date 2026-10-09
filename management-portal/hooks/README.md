@@ -32,7 +32,7 @@ spend the runtime's 9-consecutive-block budget by accident.
 To stand every gate down: node scripts/canon-gate.js stand-down --gate all --reason "..."
 or set PORTAL_CANON=off. See the header of canon-gate.js.
 
-MODULES (1.8.0) are OPTIONAL EXTRAS for Claude Code >= 2.1.287: a status line, the /portal-cockpit pane,
+MODULES (1.8.0; 1.9.0 adds the plan with progress bars, the gate panel, the command launcher, notifications and the idle-run nudge) are OPTIONAL EXTRAS for Claude Code >= 2.1.287: a status line, the /portal-cockpit pane,
 a gate band above the prompt, cards for portal tool results and a Team Chat wake-up. An older Claude Code
 ignores the key. NOTHING in the module enforces anything — a mod hook that throws fails OPEN — so every gate
 stays in the command hooks below. See hooks/mods/register.tsx and the README "Mods" section.
