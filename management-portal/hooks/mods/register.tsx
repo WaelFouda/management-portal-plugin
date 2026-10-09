@@ -318,7 +318,7 @@ export const register: Register = (on) => {
       const left = Math.max(0, Math.ceil((NUDGE_GRACE_MS - (now - idle.pendingSince)) / 1000))
       rows.push(
         <Box key="idle" flexDirection="row" columnGap={1}>
-          <Text key="idle-t" color="cyan" wrap="truncate-end">{`Run idle ${prefs.nudgeMinutes} min — Claude continues the run in ~${left}s`}</Text>
+          <Text key="idle-t" color="cyan" wrap="truncate-end">{`Idle ${prefs.nudgeMinutes}m · continues in ${left}s`}</Text>
           <Button key="idle-now" label="Continue now" variant="primary" onPress={() => { void fireNudge($) }} />
           <Button key="idle-not" label="Not now" onPress={() => { void snoozeNudge($) }} />
         </Box>,

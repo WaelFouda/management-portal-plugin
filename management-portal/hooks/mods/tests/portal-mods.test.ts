@@ -456,7 +456,7 @@ describe('idle-run nudge', () => {
     expect(w.toasts.some((t) => /Portal run idle 10 min — Claude continues it in 60s/.test(t))).toBe(true)
     expect(w.submitted.length).toBe(0)
     const ui = await $.ui.mount(BAND('terminal'))
-    expect(await ui.find({ type: 'Text', text: /Run idle 10 min — Claude continues the run in ~\d+s/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Idle 10m · continues in \d+s/ })).toBeDefined()
     await ui.unmount()
     await clock.advance(60_000)
     expect(w.submitted.length).toBe(1)
