@@ -32,7 +32,7 @@ key to create, paste or store. The plugin ships no `userConfig` prompt, and its 
 
 ---
 
-# The canon gates (1.8.0) — READ THE ESCAPE FIRST
+# The canon gates (1.9.0) — READ THE ESCAPE FIRST
 
 1.5.0 turns parts of the agent discipline from **reminders** into **hooks that refuse**. Before anything
 else, here is how to turn them off, because someone reading this section is usually reading it because
@@ -99,8 +99,10 @@ acting before reading the channel policy (`CANON-POLICY-FIRST`), skipping the jo
 (`CANON-JOURNAL-PHASE`), destroying a knowledge graph with `regenerate_*` (`CANON-KG-DESTRUCTIVE`),
 editing implementation files before the task tree exists (`CANON-TREE-FIRST`), writing the
 brief/proposal before the alignment board (`CANON-BOARD-FIRST`), a portal write after a phase
-boundary with the flow board unread (`CANON-FLOW-READ`), and marking a milestone delivered with
-the task tree unread (`CANON-STATUS-SYNC`).
+boundary with the flow board unread (`CANON-FLOW-READ`), marking a milestone delivered with
+the task tree unread (`CANON-STATUS-SYNC`), and — new in 1.9.0 — starting implementation or the first portal
+write of a phase without consulting the project's knowledge graph (`CANON-KG-CONSULT`) or writing the phase
+journal without a "What the graph showed" section (`CANON-JOURNAL-GRAPH`).
 
 **Compulsions cover:** read-after-write (`CANON-READ-BACK`, `CANON-READ-BACK-STOP`), ending a mid-run
 turn without an account of yourself (`CANON-ACCOUNT`), and closing a run without its summary board,
@@ -108,7 +110,9 @@ graph closure and final journal (`CANON-CLOSEOUT`).
 
 **Advisories — and they are advisory *by design*, not by weakness:** `bulk` efficiency (`CANON-BULK` — a
 deny on the fourth single write cannot undo the first three), status discipline (`CANON-STATUS`), and
-completeness (`CANON-COMPLETE` — which names empty **fields** and never judges what is written in them).
+completeness (`CANON-COMPLETE` — which names empty **fields** and never judges what is written in them),
+and, new in 1.9.0, learning from the graph (`CANON-KG-LEARN`: a phase passed without extract + interpret;
+`CANON-KG-GAPS`: interpretation gaps not turned into a task or a "won't fix" line).
 
 > ### ⚠️ Status, as of plugin 1.8.0 — three gates verified live, the rest armed
 >
@@ -127,7 +131,7 @@ completeness (`CANON-COMPLETE` — which names empty **fields** and never judges
 > parent's own uuid.
 >
 > **ARMED still is not ENFORCED for the rest**, and must not be written up as one. Everything not named
-> above is fixture-verified by `scripts/canon-selftest.js` (450 assertions) and has not been seen refusing
+> above is fixture-verified by `scripts/canon-selftest.js` (530 assertions as of 1.9.0) and has not been seen refusing
 > a live call. The status board in `skills/management-portal/canon-gates.md` remains the one place that
 > verdict lives; this box mirrors it and the two are required to agree.
 >
@@ -326,7 +330,7 @@ stores that an entry happened and never a word of what it said.**
 | `scripts/watch-alarm.js` | The ABSENT alarm and turn-end gate. Node, no dependencies. **Needs one manual step — below.** |
 | **watch recorder + preflight hooks** | PostToolUse records that this machine really waited; SessionStart says when the alarm is not armed. |
 
-## Mods — optional extras (1.8.0, Claude Code ≥ 2.1.287)
+## Mods — optional extras (1.8.0; overhauled in 1.9.0; Claude Code ≥ 2.1.287)
 
 1.8.0 adds a **mod**: a function-hooks module (`hooks/mods/register.tsx`, listed under `modules` in
 `hooks/hooks.json`) that Claude Code **2.1.287 or newer** loads in-process (2.1.286 in the Desktop app's
@@ -385,6 +389,7 @@ And when the mod cannot call any server itself, the cockpit fills from the porta
 | **Board preview / Graph panel** | Board and Graph tabs | The last `create_board`/`read_board` as a block tree; the last `interpret_knowledge_graph` as **hubs, gaps (close in meaning, no edge), bridges, communities, isolated nodes**, with buttons that ask Claude to interpret the project's graph or act on the gaps. |
 | **Notifications** | toasts | Every 3 min: new unread DMs, unread inbox mail, scheduling approvals waiting, tasks due today or overdue — names and subjects only, never a message body. The first poll is a silent baseline. |
 | **Idle-run nudge** | toast + band + a new turn | A run in **RUN** state with milestones remaining, idle **N minutes** (default 10) with no subagent, background shell or monitor running → a toast, a 60-second countdown in the band, then **one** "continue the run" prompt. **On by default only for runs started with `/portal-continue`** (`/portal-cockpit nudge on|off|auto|<minutes>`, or the Settings tab); after three nudges with no canon progress it pauses. This closes the documented limit that no hook can restart an idle session. |
+| **Desktop notes** | Code tab, 2.1.293 | A docked pane is about 48 columns, so milestone facts take their own line and the band stays one short line. The status line (`$.ui.status`) is **not drawn** on the Desktop surface; the cockpit and band carry the same facts there. |
 | **Compact run context** | the first message | A few lines (`portalRun`): the run, the current phase, milestones remaining, what is owed, what is stood down — added beside the canon card, never instead of it. |
 
 ### Privacy — exactly what the mod reads and writes
@@ -639,7 +644,7 @@ remember.
 > ```
 >
 > Then **reload** (`/reload-plugins`) or restart Claude Code, and **verify before you trust it**: run
-> `/plugin` and confirm the installed version reads **1.8.0**. If it does not, you are running older code
+> `/plugin` and confirm the installed version reads **1.9.0**. If it does not, you are running older code
 > no matter what the repository says.
 >
 > **This is per machine.** A bump reaches nobody until each machine updates.

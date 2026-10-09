@@ -3,7 +3,27 @@
 Releases before 1.8.0 are described in the commit history (`plugin vX.Y.Z: …`) and in the
 "Known failure modes" section of [`management-portal/README.md`](management-portal/README.md).
 
-## 1.9.0 — unreleased
+## 1.9.0 — 2026-10-09
+
+### Canon gates — the knowledge graph is consulted every phase, not only written
+
+- **New `CANON-KG-CONSULT` (blocking, during a run):** the first implementation work and the first portal
+  write after each phase boundary need a consult of the run's graph first —
+  `semantic_search_knowledge_graph`, a focused `interpret_knowledge_graph` or `get_knowledge_graph` (any
+  graph while the run has none). Credited on the run, so sub-agents and restarts inherit it; the prompt
+  notice names the exact call.
+- **New `CANON-JOURNAL-GRAPH` (blocking):** the phase journal must carry a "What the graph showed" section.
+- **New advisories `CANON-KG-LEARN` / `CANON-KG-GAPS`:** a phase passed without extract + interpret;
+  interpretation gaps (surprising connections, isolated nodes) not turned into a task or a "won't fix" line.
+  `CANON-JOURNAL-PHASE` and `CANON-FLOW-READ` no longer refuse the graph-learning calls.
+- **Fixed (measured 2026-10-09):** reads inside `bulk` count for every gate (children of `list_subtasks`
+  were never attributed, so `complete_task` over a pending child was allowed); reads past the 20th inner
+  call or with stripped args were lost; `CANON-ID` refused row 60 of a 120-row listing; a result that
+  overflowed to a saved file (`… Output has been saved to <path>`) is now read from that file (≤ 4 MB).
+- Card cap 3000 → 3600 so every gate stays on the card; `status --json` gains an additive `kg` object.
+  Selftest 530 assertions (was 450). Like every gate, the new ones are fixture-verified, not yet seen
+  refusing a live call.
+
 
 ### Mods — the plan, the gates and every command, on screen
 
@@ -29,6 +49,9 @@ Releases before 1.8.0 are described in the commit history (`plugin vX.Y.Z: …`)
 - **Idle-run nudge:** a RUN-state run with milestones remaining, idle N minutes (default 10) with no
   background work → toast, 60-second countdown, one "continue the run" prompt. Default on only for runs
   started with `/portal-continue`; pauses after three nudges without progress.
+- **Desktop Code tab, measured on 2.1.293:** a docked pane is about 48 columns wide, so the layout puts
+  milestone facts on their own line and the band keeps to one short line; `$.ui.status` (the status line)
+  is **not drawn** on the Desktop surface — there the cockpit and band carry the same facts.
 - Still additive and never enforcement. Tests: `claude plugin test management-portal` — 44 tests, terminal
   and desktop surfaces.
 

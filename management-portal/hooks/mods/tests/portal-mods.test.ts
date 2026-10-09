@@ -589,7 +589,8 @@ describe('command launcher', () => {
     await ui.press({ key: 'pick-channel-join' })
     await ui.press({ key: 'pick-portal-project' })
     await ui.input({ key: 'preset-name', text: 'Run' })
-    expect(await ui.find({ type: 'Button', key: 'save-preset' })).toBeDefined() // a built-in name is refused
+    expect(w.toasts.some((t) => /"Run" is built in/.test(t))).toBe(true) // a built-in name is refused
+    expect(await ui.find({ type: 'Button', key: 'save-preset' })).toBeUndefined() // one save control: the field's own
     await ui.input({ key: 'preset-name', text: 'My run' })
     expect(await ui.find({ type: 'Text', text: /COMMANDS · My run · \d+ shown/ })).toBeDefined()
     expect(await ui.find({ type: 'Button', key: 'cmd-channel-join' })).toBeDefined()

@@ -1277,11 +1277,11 @@ async function commandsBody($: EngineInterface, els: Els, cols: number, desktop:
     if (els.Input) {
       out.push(<els.Input key="preset-name" label="Preset name" placeholder="e.g. My run" value={l.presetName}
         onInput={(v: string) => { void update($, launcherA, (x) => ({ ...x, presetName: String(v || '') })) }}
-        onSubmit={(v: string) => { void savePreset($, String(v || '')) }} submitLabel="save" />)
+        onSubmit={(v: string) => { void savePreset($, String(v || '')) }} submitLabel="Save preset" />)
     }
     out.push(
       <Box key="e-acts" flexDirection="row" columnGap={1}>
-        <Button key="save-preset" label="Save preset" variant="primary" onPress={() => { void savePreset($, null) }} />
+        {els.Input ? null : <Button key="save-preset" label="Save preset" variant="primary" onPress={() => { void savePreset($, null) }} />}
         <Button key="cancel-edit" label="Cancel" onPress={() => { void update($, launcherA, (x) => ({ ...x, editing: null })) }} />
         {!BUILTIN_PRESETS.includes(active) ? <Button key="delete-preset" label={`Delete "${active}"`} onPress={() => { void deletePreset($, active) }} /> : null}
       </Box>,
