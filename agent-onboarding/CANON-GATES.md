@@ -91,7 +91,7 @@ This is not hypothetical. The session that wrote this file had the portal tools 
 have matched. **On that install every read-after-write hook was silently dead.**
 
 **1.5.0 takes the fix.** The `PreToolUse` and `PostToolUse` entries now match **`.*`** and scope at
-**runtime** against a frozen set of **257** portal tool names (**263** as of 1.7.8) — a raw name is portal iff it matches
+**runtime** against a frozen set of **257** portal tool names (**263** as of 1.7.8, **271** as of 1.9.2) — a raw name is portal iff it matches
 `^mcp__.+?__(.+)$` and the tail is in the set, so an unknown MCP server is **ignored rather than
 gated**, keeping Supabase, Desktop Commander, chrome-devtools and playwright out of the blast radius.
 Non-portal tools are judged purely by **argument shape** — does a key carry a shell command line,
@@ -188,7 +188,7 @@ must stay word-consistent between them.
   `CANON-KG-CONSULT`, in a run in state RUN, refuses the first implementation work (a project source write
   by `CANON-TREE-FIRST`'s detection, or a mutating command naming no target outside the project) and the
   first portal write after each phase boundary, until a graph has been consulted since that boundary (or
-  since the run began): `semantic_search_knowledge_graph`, `interpret_knowledge_graph` with a `focus`, or
+  since the run began): `semantic_search_knowledge_graph`, `ask_knowledge_graph` (1.9.2), `interpret_knowledge_graph` with a `focus`, or
   `get_knowledge_graph`, on the run's own graph (`kg_ids`) or on any graph while the run has none; with no
   graph for the project, an empty `list_knowledge_graphs`/`search_knowledge_graphs` counts and
   `create_knowledge_graph` is never refused. The consult is also credited on the run (`kg_consult_at`) so

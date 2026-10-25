@@ -50,9 +50,12 @@ invent, guess, pattern-match, abbreviate, or reuse-from-memory an id. No id? Rea
 **Consult the knowledge graph every phase — it is built to be read.** At run start and at each phase
 start, before the first implementation work or portal write, consult it:
 `semantic_search_knowledge_graph(graph_id, query:"<the decision this phase is about to take>")`,
-`interpret_knowledge_graph` with a `focus`, or `get_knowledge_graph` (no graph yet? an empty
-`list_knowledge_graphs(search:"<project>")`, then `create_knowledge_graph`). Each phase,
-`extract_knowledge_graph` + `interpret_knowledge_graph`; journal it under **"What the graph showed"**; and
+`ask_knowledge_graph(graph_id, question)`, `interpret_knowledge_graph` with a `focus`, or `get_knowledge_graph`
+(no graph yet? an empty `list_knowledge_graphs(search:"<project>")`, then `create_knowledge_graph`). Each phase,
+`extract_knowledge_graph` + `interpret_knowledge_graph` — an extract that answers "⏳ … still running" is polled
+with `get_knowledge_graph` until `run_state` is `idle` before interpreting, one that ended `paused` (stop/pause
+or the 30-minute deadline) is finished with `resume_knowledge_graph_extraction`, `stop_`/`pause_` halt a run,
+and `force:true` only resets a run reported `stale`, never starts a second; journal it under **"What the graph showed"**; and
 turn every gap it reports into a task or a journal "won't fix" line. Gated by `CANON-KG-CONSULT` and
 `CANON-JOURNAL-GRAPH`; full loop in `reference.md` §2b (e).
 

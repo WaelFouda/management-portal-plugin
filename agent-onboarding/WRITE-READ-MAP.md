@@ -27,6 +27,8 @@
 | `create_note`, `update_note`, `update_note_content`, `delete_note` | `get_note` / `list_notes` | note fields |
 | `create_note_column`, `update_note_column`, `delete_note_column` | `list_note_columns` | category/column state |
 | `delete_knowledge_graph` | `list_knowledge_graphs` | the graph is GONE from the list (a delete is verified by absence, not presence) |
+| `stop_knowledge_graph_extraction`, `pause_knowledge_graph_extraction`, `resume_knowledge_graph_extraction` | `get_knowledge_graph(graph_id)` / `list_knowledge_graphs` | the graph's `run_state` (running → stopping → stopped/paused; resume → running → idle) |
+| `create_knowledge_graph_edge` | `get_knowledge_graph(graph_id)` / `get_knowledge_graph_node` | the edge is in the graph — read with the **graph** id from the write's own arguments, never the edge id it returned |
 | `create_event`, `update_event`, `delete_event` | `list_events` | event fields |
 | `log_time`, `start_timer`, `stop_timer`, `update_time_entry`, `delete_time_entry` | `list_time_entries` / `get_time_summary` | time entries/totals |
 | `create_quick_proposal`, `update_quick_proposal`, `promote_quick_proposal`, `attach_to_quick_proposal` | `get_quick_proposal` / `list_quick_proposals` | quick-proposal fields |

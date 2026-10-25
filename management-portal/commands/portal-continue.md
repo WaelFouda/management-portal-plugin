@@ -95,7 +95,11 @@ For each phase, in order, and without pausing between them:
 7. **Learn from the graph** — `extract_knowledge_graph(graph_id)` (never `regenerate_*`, which destroys
    the nodes and edges first), then `interpret_knowledge_graph(focus:"<the next phase>")`. `CANON-KG-LEARN`
    reports a phase that passed without both. Neither `CANON-JOURNAL-PHASE` nor `CANON-FLOW-READ` refuses
-   these learning calls after a boundary.
+   these learning calls after a boundary. If the extract returns "⏳ … still running", poll
+   `get_knowledge_graph` until `run_state` is `idle` before interpreting; if it ended `paused` (a stop/pause
+   or the 30-minute deadline) call `resume_knowledge_graph_extraction`; halt a run with
+   `stop_`/`pause_knowledge_graph_extraction` (never refused by any gate); `force:true` only resets a run
+   reported `stale`, never a second run.
 8. **Journal the phase and read it back** (canon (d), §5) — with a **"What the graph showed"** section, plus
    what was learnt and what must be returned to. `CANON-JOURNAL-GRAPH` refuses the first write after the
    boundary until the entry has one (a heading or line with that phrase, or a line starting `graph:`);

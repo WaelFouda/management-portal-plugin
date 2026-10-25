@@ -515,7 +515,7 @@ are both `management-portal`, the segment is doubled — which looks like a typo
 because `matcher` is a **full** match that pattern was silently **inert** for a claude.ai-connector
 install (`mcp__claude_ai_management-portal__*`) and for a UUID-named install (`mcp__<uuid>__*`), both
 of which are live in the wild. 1.5.0 matches **`.*`** and scopes **at runtime** against a frozen set
-of 257 portal tool names (263 as of 1.7.8) — a tool outside that set is never subject to a portal invariant, so an
+of 257 portal tool names (263 as of 1.7.8, 271 as of 1.9.2) — a tool outside that set is never subject to a portal invariant, so an
 unknown MCP server is ignored rather than gated. **Never enumerate install spellings in a regex
 again**; that is how this broke in the first place. (`watch-alarm.js`'s recorder is the one remaining
 narrow matcher, and it is spelling-agnostic too: `mcp__.*__(await_my_turn|start_watching_channel)`.)
@@ -621,7 +621,7 @@ other and the catalog advertises a version that is not what installs — the doc
 behaviour the user does not have. **Run this from the repo root before every publish:**
 
 ```bash
-node -e "const a=require('./.claude-plugin/marketplace.json').plugins[0].version, b=require('./agent-onboarding/plugin/.claude-plugin/plugin.json').version; console.log(a===b?('OK  both '+a):('MISMATCH  catalog='+a+'  plugin='+b)); process.exit(a===b?0:1)"
+node -e "const a=require('./.claude-plugin/marketplace.json').plugins[0].version, b=require('./management-portal/.claude-plugin/plugin.json').version; console.log(a===b?('OK  both '+a):('MISMATCH  catalog='+a+'  plugin='+b)); process.exit(a===b?0:1)"
 ```
 
 It exits non-zero on a mismatch, so it works as a pre-publish check rather than something to

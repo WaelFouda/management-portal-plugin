@@ -659,7 +659,7 @@ function caseLifecycle() {
   const d = cli(['doctor']);
   check('doctor reports the home and the run', /CANON_HOME/.test(d.stdout || '') && /state RUN/.test(d.stdout || ''), d.stdout);
   check('doctor lists armed gates', /ARMED\s+CANON-ID/.test(d.stdout || ''));
-  check('doctor reports the tool count', /portal tools\s+:\s+263 known/.test(d.stdout || ''), (d.stdout || '').split('\n').find((x) => /portal tools/.test(x)));
+  check('doctor reports the tool count', /portal tools\s+:\s+271 known/.test(d.stdout || ''), (d.stdout || '').split('\n').find((x) => /portal tools/.test(x)));
   const c = cli(['run-close']);
   check('run-close closes the run', /closed/.test(c.stdout || ''), c.stdout);
   const d2 = cli(['doctor']);
@@ -684,7 +684,7 @@ function caseTools() {
   fresh();
   const t = cli(['tools']);
   const names = (t.stdout || '').trim().split('\n');
-  check('tools lists 263 portal tools', names.length === 263, 'got ' + names.length);
+  check('tools lists 271 portal tools', names.length === 271, 'got ' + names.length);
   check('bulk is in the list', names.includes('bulk'));
   check('create_project is in the list', names.includes('create_project'));
   check('a foreign tool is not', !names.includes('write_file'));
@@ -2957,6 +2957,194 @@ function caseGapOverflowStub() {
   check('…and still settles the owed cluster', !/CANON-READ-BACK/.test(blockOf(r) || ''), (blockOf(r) || '').slice(0, 200));
 }
 
+// ============================================================================
+// 1.9.2 — the extraction run controls, ask_knowledge_graph, and the edge read-back
+// ============================================================================
+
+const PHASE_GATES = /CANON-JOURNAL-PHASE|CANON-FLOW-READ|CANON-KG-CONSULT|CANON-JOURNAL-GRAPH/;
+
+function caseKgBrakesNeverRefused() {
+  console.log('\n1.9.2 the brakes — stop_/pause_knowledge_graph_extraction are never refused for work');
+  const G = require('./canon-gate.js');
+  check('stop_ and pause_ are declared brakes', G.KG_BRAKES.has('stop_knowledge_graph_extraction')
+    && G.KG_BRAKES.has('pause_knowledge_graph_extraction') && G.KG_BRAKES.size === 2);
+  check('resume_ is NOT a brake (it starts a run) but is KG learning', !G.KG_BRAKES.has('resume_knowledge_graph_extraction')
+    && G.KG_LEARNING.has('resume_knowledge_graph_extraction'));
+  for (const t of ['stop_knowledge_graph_extraction', 'pause_knowledge_graph_extraction', 'resume_knowledge_graph_extraction']) {
+    check(t + ' is classed as a portal write', G.isPortalWrite(t));
+  }
+
+  // (1) THE PHASE GATES. A bare boundary owes all four: journal, flow board, consult, section.
+  let sid = fresh();
+  runWithTree(sid, 'P');
+  gate('post', post(sid, MCP + 'create_knowledge_graph', { title: 'P' }, '✅ Knowledge graph created [id: ' + UUID_G + ']'));
+  gate('post', post(sid, MCP + 'get_knowledge_graph', { graph_id: UUID_G }, '# Knowledge graph: P [id: ' + UUID_G + ']'));
+  gate('post', post(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }, 'ok [id: ' + UUID_B + ']'));
+  const ctl = denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A })));
+  check('(control) after a bare boundary a portal write IS refused by a phase gate', PHASE_GATES.test(ctl || ''), (ctl || '(ALLOWED)').slice(0, 140));
+  for (const t of ['stop_knowledge_graph_extraction', 'pause_knowledge_graph_extraction']) {
+    const d = denialOf(gate('pre', pre(sid, MCP + t, { graph_id: UUID_G })));
+    check('after a bare boundary, ' + t + ' is not refused at all', d === null, (d || '').slice(0, 160));
+  }
+  const rs = denialOf(gate('pre', pre(sid, MCP + 'resume_knowledge_graph_extraction', { graph_id: UUID_G })));
+  check('after a bare boundary, resume_knowledge_graph_extraction is not refused by a phase gate',
+    !PHASE_GATES.test(rs || ''), (rs || '').slice(0, 160));
+  const inBulk = denialOf(gate('pre', pre(sid, MCP + 'bulk', { calls: [
+    { tool: 'stop_knowledge_graph_extraction', arguments: { graph_id: UUID_G } }] })));
+  check('…and a brake inside a bulk is not refused either', inBulk === null, (inBulk || '').slice(0, 160));
+
+  // (2) CANON-DEBT-READ-BACK — a carried read-back debt refuses work, never the brake.
+  sid = fresh();
+  cli(RUN_ARGS);
+  seedSeen(sid, UUID_A);
+  seedSeen(sid, UUID_G);
+  leakUnverifiedWrite(sid);
+  gate('prompt', { session_id: sid, cwd: PROJ, hook_event_name: 'UserPromptSubmit', prompt: 'carry on' });
+  check('(control) the read-back debt refuses work',
+    /CANON-DEBT-READ-BACK/.test(denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A }))) || ''));
+  for (const t of ['stop_knowledge_graph_extraction', 'pause_knowledge_graph_extraction']) {
+    const d = denialOf(gate('pre', pre(sid, MCP + t, { graph_id: UUID_G })));
+    check('with a read-back debt carried, ' + t + ' is not refused', !/CANON-DEBT/.test(d || ''), (d || '').slice(0, 160));
+  }
+
+  // (3) CANON-DEBT-CLOSEOUT — the unmade close-out refuses work, never the brake.
+  sid = fresh();
+  cli(RUN_ARGS);
+  patchRun({ all_phases_terminal: true });
+  seedSeen(sid, UUID_A);
+  seedSeen(sid, UUID_G);
+  gate('prompt', { session_id: sid, cwd: PROJ, hook_event_name: 'UserPromptSubmit', prompt: 'go' });
+  gate('stop', stop(sid, false));
+  gate('stop', stop(sid, true));
+  gate('prompt', { session_id: sid, cwd: PROJ, hook_event_name: 'UserPromptSubmit', prompt: 'next' });
+  check('(control) the close-out debt refuses work',
+    /CANON-DEBT-CLOSEOUT/.test(denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A }))) || ''));
+  for (const t of ['stop_knowledge_graph_extraction', 'pause_knowledge_graph_extraction',
+    'resume_knowledge_graph_extraction']) {
+    const d = denialOf(gate('pre', pre(sid, MCP + t, { graph_id: UUID_G })));
+    check('with the close-out owed, ' + t + ' is not refused by CANON-DEBT-CLOSEOUT', !/CANON-DEBT-CLOSEOUT/.test(d || ''), (d || '').slice(0, 160));
+  }
+}
+
+function caseKgEdgeReadBackTakesTheGraphId() {
+  console.log('\n1.9.2 create_knowledge_graph_edge settles on the GRAPH id from its own arguments');
+  // The fourth instance of the READ_ARG_SOURCE defect: the edge obligation keyed on the EDGE
+  // id the write returned, so the gate printed get_knowledge_graph("<edge id>").
+  const EDGE = { graph_id: UUID_G, source_node_id: UUID_A, target_node_id: UUID_B, relation_type: 'relates_to' };
+  const EDGE_RESP = "✅ Knowledge graph edge created: 'a' -> 'b' [relates_to, confidence 0.9] [id: " + UUID_X + ']';
+  let sid = fresh();
+  const b = blockOf(gate('post', post(sid, MCP + 'create_knowledge_graph_edge', EDGE, EDGE_RESP)));
+  check('the printed settling read is get_knowledge_graph(<graph id from the arguments>)',
+    /get_knowledge_graph\("?eeeeeeee/.test(b || ''), (b || '(no block)').slice(0, 200));
+  check('  …and never the edge id the write returned', !/get_knowledge_graph\("?ffffffff/.test(b || ''), (b || '').slice(0, 200));
+
+  sid = fresh();
+  gate('post', post(sid, MCP + 'create_knowledge_graph_edge', EDGE, EDGE_RESP));
+  check('(control) with no read the edge stays outstanding at turn end',
+    /create_knowledge_graph_edge/.test(blockOf(gate('stop', stop(sid, false))) || ''));
+
+  sid = fresh();
+  gate('post', post(sid, MCP + 'create_knowledge_graph_edge', EDGE, EDGE_RESP));
+  gate('post', post(sid, MCP + 'get_knowledge_graph', { graph_id: UUID_G }, '# Knowledge graph: P [id: ' + UUID_G + ']\nstats: nodes=2 edges=1'));
+  const s = blockOf(gate('stop', stop(sid, false)));
+  check('get_knowledge_graph(graph_id) — the call it prints — CLEARS it', !/create_knowledge_graph_edge/.test(s || ''), (s || '').slice(0, 200));
+
+  sid = fresh();
+  gate('post', post(sid, MCP + 'create_knowledge_graph_edge', EDGE, EDGE_RESP));
+  gate('post', post(sid, MCP + 'get_knowledge_graph', { graph_id: UUID_C }, '# Knowledge graph: other [id: ' + UUID_C + ']'));
+  check('a read of a DIFFERENT graph settles nothing',
+    /create_knowledge_graph_edge/.test(blockOf(gate('stop', stop(sid, false))) || ''));
+
+  sid = fresh();
+  gate('post', post(sid, MCP + 'create_knowledge_graph_edge', EDGE, EDGE_RESP));
+  gate('post', post(sid, MCP + 'get_knowledge_graph_node', { node_id: UUID_A },
+    '# Node: a [id: ' + UUID_A + ']\ngraph: P (' + UUID_G + ')\n\n## Connections (1)\n'
+    + '- -> b | | relates_to | confidence 0.9 [edge id: ' + UUID_X + ']'));
+  const sn = blockOf(gate('stop', stop(sid, false)));
+  check('a get_knowledge_graph_node read that lists the edge clears it too', !/create_knowledge_graph_edge/.test(sn || ''), (sn || '').slice(0, 200));
+
+  sid = fresh();
+  const bb = blockOf(gate('post', post(sid, MCP + 'bulk', { calls: [
+    { tool: 'create_knowledge_graph_edge', arguments: EDGE },
+    { tool: 'get_knowledge_graph', arguments: { graph_id: UUID_G } }] },
+  'Ran 2/2 call(s); 0 failed.\n[0] create_knowledge_graph_edge: ' + EDGE_RESP
+    + '\n[1] get_knowledge_graph: # Knowledge graph: P [id: ' + UUID_G + ']')));
+  check('a write and its graph read in ONE bulk open and clear together', !/create_knowledge_graph_edge/.test(bb || ''), (bb || '').slice(0, 200));
+}
+
+function caseKgAskIsAConsult() {
+  console.log('\n1.9.2 ask_knowledge_graph is a consult — CANON-KG-CONSULT, bulk and close-out');
+  const G = require('./canon-gate.js');
+  check('ask_knowledge_graph is a consult read', G.KG_CONSULT_READS.has('ask_knowledge_graph'));
+  check('ask_knowledge_graph is a portal tool and NOT a write', G.isPortalTool('ask_knowledge_graph') && !G.isPortalWrite('ask_knowledge_graph'));
+  const ASK = 'The auth cluster depends on billing.\n\nCited nodes:\n- auth [concept] (community: -) [node: ' + UUID_A + ']';
+
+  // (1) The phase half.
+  let sid = fresh();
+  runWithTree(sid, 'P');
+  gate('post', post(sid, MCP + 'create_knowledge_graph', { title: 'P' }, '✅ Knowledge graph created [id: ' + UUID_G + ']'));
+  gate('post', post(sid, MCP + 'ask_knowledge_graph', { graph_id: UUID_G, question: 'plan?' }, ASK));
+  boundaryMinusGraph(sid, GRAPH_SECTION);
+  const ctl = denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A })));
+  check('(control) an ask BEFORE the boundary does not carry over', /CANON-KG-CONSULT/.test(ctl || ''), (ctl || '(ALLOWED)').slice(0, 160));
+  check('  …and the refusal now lists ask_knowledge_graph among the consults that count', /ask_knowledge_graph/.test(ctl || ''), (ctl || '').slice(0, 400));
+  gate('post', post(sid, MCP + 'ask_knowledge_graph', { graph_id: UUID_G, question: 'what does phase 2 touch?' }, ASK));
+  const ok = denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A })));
+  check('an ask of the run graph after the boundary satisfies CANON-KG-CONSULT', !/CANON-KG-CONSULT/.test(ok || ''), (ok || '').slice(0, 160));
+
+  // (2) The implementation half.
+  sid = fresh();
+  runWithTree(sid, 'Impl');
+  const SRC = path.join(PROJ, 'feature.ts');
+  check('(control) the first source write is refused with no consult',
+    /CANON-KG-CONSULT/.test(denialOf(gate('pre', pre(sid, 'Write', { file_path: SRC, content: 'x' }))) || ''));
+  gate('post', post(sid, MCP + 'ask_knowledge_graph', { graph_id: UUID_G, question: 'q' }, ASK));
+  const w = denialOf(gate('pre', pre(sid, 'Write', { file_path: SRC, content: 'x' })));
+  check('an ask releases the first implementation write', !/CANON-KG-CONSULT/.test(w || ''), (w || '').slice(0, 160));
+
+  // (3) An ask INSIDE a bulk counts (RD_TOOLS), as every other consult does.
+  sid = fresh();
+  runWithTree(sid, 'P');
+  gate('post', post(sid, MCP + 'create_knowledge_graph', { title: 'P' }, '✅ Knowledge graph created [id: ' + UUID_G + ']'));
+  boundaryMinusGraph(sid, GRAPH_SECTION);
+  check('(control) owed after the boundary', owedNow(sid));
+  gate('post', post(sid, MCP + 'bulk', { calls: [{ tool: 'ask_knowledge_graph', arguments: { graph_id: UUID_G, question: 'q' } }] },
+    'Ran 1/1 call(s); 0 failed.\n[0] ask_knowledge_graph: ' + ASK));
+  check('an ask inside a bulk settles the consult', !owedNow(sid), JSON.stringify(statusOf(sid).kg || {}));
+  const pb = denialOf(gate('pre', pre(sid, MCP + 'bulk', { calls: [
+    { tool: 'ask_knowledge_graph', arguments: { graph_id: UUID_G, question: 'q' } },
+    { tool: 'update_task', arguments: { task_id: UUID_A } }] })));
+  check('bulk([ask, write]) is not refused by CANON-KG-CONSULT', !/CANON-KG-CONSULT/.test(pb || ''), (pb || '').slice(0, 160));
+
+  // (4) The close-out counts an ask as the graph read-back, and a resume as the extract.
+  const rows = [
+    { k: 'post', t: 1, tool: 'ask_knowledge_graph', ids: [], ok: true, args: { graph_id: UUID_G } },
+    { k: 'post', t: 2, tool: 'resume_knowledge_graph_extraction', ids: [UUID_G], ok: true, args: { graph_id: UUID_G } },
+  ];
+  const miss = G.closeoutMissing(G.fold(rows, null)).map((m) => m.id);
+  check('the close-out counts ask_knowledge_graph as the graph read', !miss.includes('kg-read'), miss.join(','));
+  check('the close-out counts resume_knowledge_graph_extraction as the extract', !miss.includes('kg-extract'), miss.join(','));
+}
+
+function caseKgRunControlsReadBack() {
+  console.log('\n1.9.2 the run controls are writes — each owes get_knowledge_graph');
+  for (const t of ['stop_knowledge_graph_extraction', 'pause_knowledge_graph_extraction', 'resume_knowledge_graph_extraction']) {
+    let sid = fresh();
+    const resp = 'Asked the extraction for \'P\' to ' + t.split('_')[0] + '. [id: ' + UUID_G + ']';
+    const b = blockOf(gate('post', post(sid, MCP + t, { graph_id: UUID_G }, resp)));
+    check(t + ' opens a read-back obligation', /CANON-READ-BACK/.test(b || ''), (b || '(no block)').slice(0, 160));
+    check('  …and names get_knowledge_graph(<that graph>)', /get_knowledge_graph\("?eeeeeeee/.test(b || ''), (b || '').slice(0, 200));
+    sid = fresh();
+    gate('post', post(sid, MCP + t, { graph_id: UUID_G }, resp));
+    gate('post', post(sid, MCP + 'get_knowledge_graph', { graph_id: UUID_G }, '# Knowledge graph: P [id: ' + UUID_G + ']\nrun_state: paused'));
+    const s = blockOf(gate('stop', stop(sid, false)));
+    check('  …and get_knowledge_graph clears it', !new RegExp(t).test(s || ''), (s || '').slice(0, 200));
+  }
+  const sid = fresh();
+  const a = blockOf(gate('post', post(sid, MCP + 'ask_knowledge_graph', { graph_id: UUID_G, question: 'q' }, 'answer [node: ' + UUID_A + ']')));
+  check('ask_knowledge_graph is a read and owes nothing', a === null, (a || '').slice(0, 160));
+}
+
 function run() {
   console.log('portal-canon selftest — every gate proved on BOTH sides');
   const cases = [caseSessionStart, caseP1, caseP2, caseP3, caseP3Latch, caseP4, caseP5,
@@ -2969,7 +3157,8 @@ function run() {
     caseDebtReadBack, caseDebtSeams, caseDebtThisTurn, caseDebtCloseout, caseGapSourceKindsFromItems, caseDebtDegrades, caseDebtColdReturn,
     caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath,
     caseKgConsultImplementation, caseKgConsultPhase, caseJournalGraph, caseKgAdvisories,
-    caseGapBulkReadsCount, caseGapOverflowStub];
+    caseGapBulkReadsCount, caseGapOverflowStub,
+    caseKgBrakesNeverRefused, caseKgEdgeReadBackTakesTheGraphId, caseKgAskIsAConsult, caseKgRunControlsReadBack];
   for (const c of cases) {
     try { c(); } catch (e) { fail++; failures.push(c.name + ' threw: ' + e.message); console.log('  FAIL  ' + c.name + ' threw: ' + e.message); }
   }

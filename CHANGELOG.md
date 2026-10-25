@@ -3,6 +3,46 @@
 Releases before 1.8.0 are described in the commit history (`plugin vX.Y.Z: …`) and in the
 "Known failure modes" section of [`management-portal/README.md`](management-portal/README.md).
 
+## 1.9.2 — 2026-10-25
+
+### Canon gates — knowledge-graph extraction runs are controllable, and the brakes are never refused
+
+The HelmOS backend now gives every extraction a `run_state` (`idle | running | stopping | paused | stopped |
+failed`, plus a computed `stale` when the heartbeat is more than 5 minutes old), a 30-minute deadline that
+ends a run `paused`, and four new agent tools. `extract_knowledge_graph(force=true)` no longer starts a
+second concurrent run — it only takes over a run reported stale.
+
+- **Eight backend tools the gates could not see are now in `PORTAL_TOOLS` (263 → 271):**
+  `stop_knowledge_graph_extraction`, `pause_knowledge_graph_extraction`,
+  `resume_knowledge_graph_extraction`, `ask_knowledge_graph`, and `generate`, `check_generation`,
+  `list_models`, `read_media`, which had been registered in the backend without being listed. A tool outside
+  the list is never gated, so none of these was subject to `CANON-ID`, read-back or the seen set.
+- **The run controls owe a read-back.** `stop_`/`pause_`/`resume_knowledge_graph_extraction` are portal
+  writes (`stop|pause|resume` joined `WRITE_PREFIX`) and map to `get_knowledge_graph` / `list_knowledge_graphs`
+  in `WRITE_READ_MAP` and `reference.md` §3.
+- **The brakes are never refused (`KG_BRAKES`).** `stop_` and `pause_knowledge_graph_extraction` are exempt
+  from `CANON-DEBT-READ-BACK`, `CANON-DEBT-CLOSEOUT`, `CANON-JOURNAL-PHASE`, `CANON-FLOW-READ`,
+  `CANON-KG-CONSULT`, `CANON-JOURNAL-GRAPH` and `CANON-POLICY-FIRST`: no gate that refuses work may refuse
+  the call that stops a runaway extraction. Their own read-back is still owed after the call.
+- **`resume_knowledge_graph_extraction` is the incremental extract:** in `KG_LEARNING` (never refused by the
+  phase gates), `KG_BUILDS`, `CLOSEOUT_CLEARING`, the `rd` bulk summary, and credited as the close-out's
+  extract and as `CANON-KG-LEARN`'s extract.
+- **`ask_knowledge_graph` counts as consulting a graph** for `CANON-KG-CONSULT` (direct and inside `bulk`),
+  and as the close-out's graph read-back. The refusal text, the card and the docs list it.
+- **Fixed: `create_knowledge_graph_edge`'s read-back named a call that could never clear it.** The
+  obligation was keyed on the EDGE id the write returned, so the gate printed `get_knowledge_graph("<edge
+  id>")`. It is now keyed on the write's own `graph_id` (`READ_ARG_SOURCE`, the fourth instance of this
+  defect), and a `get_knowledge_graph_node` read — whose reply names the graph and lists the edge — clears
+  it too. The node writes were checked for the same defect and do not have it.
+- **Docs:** one rule in `reference.md`, `SKILL.md`, `/portal-project` and `/portal-continue` — if extract
+  returns "⏳ … still running", poll `get_knowledge_graph` until `run_state` is `idle` before interpreting;
+  if it ended `paused`, call `resume_knowledge_graph_extraction`; halt a run with `stop_`/`pause_`;
+  `force:true` only resets a stale run. The README's version-check one-liner now reads
+  `./management-portal/.claude-plugin/plugin.json` (it pointed at a path that does not exist in this repo).
+- Selftest 576 assertions (was 530), including: the brakes pass every phase and debt gate while work is
+  refused; the edge's printed read uses the graph id and clears it; an ask satisfies `CANON-KG-CONSULT`;
+  each run control owes `get_knowledge_graph`.
+
 ## 1.9.1 — 2026-10-09
 
 ### Mods

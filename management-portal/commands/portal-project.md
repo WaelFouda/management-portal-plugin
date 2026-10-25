@@ -180,24 +180,30 @@ date query afterwards is wrong with no error to tell you.
    A graph can never source itself, and a cycle between graphs is refused.
 3. `extract_knowledge_graph(graph_id)` — the incremental, cheap path. **Never** `regenerate_knowledge_graph`
    for a refresh: it destroys the nodes and edges first and re-reads every source. `CANON-KG-DESTRUCTIVE`
-   refuses it inside a run unless the owner authorised it.
+   refuses it inside a run unless the owner authorised it. If it returns "⏳ … still running", poll
+   `get_knowledge_graph(graph_id)` until `run_state` is `idle` before interpreting; if it ended `paused` (a
+   stop/pause or the 30-minute deadline) call `resume_knowledge_graph_extraction(graph_id)`, which continues
+   from the chunk cache. Halt a run with `stop_`/`pause_knowledge_graph_extraction` — no gate refuses them.
+   `force:true` only resets a run reported `stale`; it never starts a second run.
 4. `interpret_knowledge_graph(graph_id, focus:"<the question this run is answering>")` — and **say what it
    showed**. An interpretation nobody reads is not an interpretation.
-5. **Read it back**: `get_knowledge_graph(graph_id)` or `semantic_search_knowledge_graph`.
+5. **Read it back**: `get_knowledge_graph(graph_id)`, `semantic_search_knowledge_graph` or
+   `ask_knowledge_graph(graph_id, question)`.
 
 Treat an edge below 0.6 confidence as a hypothesis. Check it against the record before you build on it.
 
 The graph is read **per phase**, not only at close-out:
 
 - **Phase start** — before the phase's first write, ask the graph about the decision the phase is about to
-  take: `semantic_search_knowledge_graph(graph_id, query)` or `interpret_knowledge_graph(graph_id,
-  focus:"<that decision>")`. `CANON-KG-CONSULT` refuses the first implementation work (a project source
+  take: `semantic_search_knowledge_graph(graph_id, query)`, `ask_knowledge_graph(graph_id, question)` or
+  `interpret_knowledge_graph(graph_id, focus:"<that decision>")`. `CANON-KG-CONSULT` refuses the first implementation work (a project source
   write or a mutating command) and the first portal write after each boundary until the run's graph has been
   consulted (`get_knowledge_graph` also counts; an `interpret` needs a `focus`). With no graph for the
   project, an empty `list_knowledge_graphs`/`search_knowledge_graphs` counts and `create_knowledge_graph` is
   never refused.
 - **Phase end, in this order** — `extract_knowledge_graph` + `interpret_knowledge_graph(focus:"<next
-  phase>")` → the journal entry with its "What the graph showed" section, read back (§4) →
+  phase>")` (a still-running extract is polled to `idle` first, a `paused` one resumed) → the journal entry
+  with its "What the graph showed" section, read back (§4) →
   `list_flow_clusters` + `list_flow_connections` → the next phase. `CANON-KG-LEARN` reports a phase that
   passed without the extract + interpret.
 - **Gaps become tasks** — every gap an interpretation reports ("CANDIDATE SURPRISING CONNECTIONS" with no

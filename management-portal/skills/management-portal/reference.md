@@ -175,6 +175,11 @@ and for the status board that says whether a gate is actually live yet.
   the existing nodes and edges first. **The graph is read per phase, not only at close-out:** consult it
   at run start and at each phase start (`CANON-KG-CONSULT`), `extract_` + `interpret_` it each phase,
   and turn its gaps into tasks or a journal "won't fix" line — the loop is spelled out in §2b (e).
+  **Extraction runs (1.9.2):** if `extract_knowledge_graph` returns "⏳ … still running", poll
+  `get_knowledge_graph` until `run_state` is `idle` before interpreting; if it ended `paused` (a stop/pause or
+  the 30-minute deadline) call `resume_knowledge_graph_extraction` — it continues from the chunk cache; halt
+  a run with `stop_`/`pause_knowledge_graph_extraction` (never refused by any gate); `force:true` only
+  resets a run reported `stale`, it never starts a second run.
 - **(f) Efficiency** — the portal has a **`bulk`** tool. Use it instead of N single calls:
   `bulk(calls:[{tool:"create_task",args:{…}}, …], stop_on_error:false)`. A write and its verifying
   read can go in the **same** bulk. Read the per-item results — `[i] FAILED — …` marks the ones that
@@ -281,11 +286,14 @@ you decide:
 
 1. **At run start and at each phase start, consult it** before the first implementation work or portal
    write: `semantic_search_knowledge_graph(graph_id, query:"<the decision this phase is about to take>")`,
-   `interpret_knowledge_graph(graph_id, focus:"…")` (an unfocused interpret does not count), or
-   `get_knowledge_graph`. No graph for the project yet? `list_knowledge_graphs(search:"<project>")`
+   `ask_knowledge_graph(graph_id, question:"…")`, `interpret_knowledge_graph(graph_id, focus:"…")` (an
+   unfocused interpret does not count), or `get_knowledge_graph`. No graph for the project yet? `list_knowledge_graphs(search:"<project>")`
    coming back empty counts — then `create_knowledge_graph`.
 2. **Each phase, feed it and ask it:** `extract_knowledge_graph` → `interpret_knowledge_graph(focus:"<what
-   the next phase must decide>")`.
+   the next phase must decide>")`. If the extract answers "⏳ … still running", poll `get_knowledge_graph`
+   until `run_state` is `idle` before interpreting; a run that ended `paused` (stop/pause or the 30-minute
+   deadline) is finished with `resume_knowledge_graph_extraction`; `stop_`/`pause_knowledge_graph_extraction`
+   halt one; `force:true` only resets a run reported `stale`, never starts a second.
 3. **Journal it** under "What the graph showed" (canon (d)), then read the journal back.
 4. **Gaps become work:** every "NO edge between them" candidate connection and every isolated node the
    interpretation reports becomes a `create_task`/`create_subtask`, or a journal line saying why it
@@ -366,6 +374,8 @@ has no read path here, that is a coverage gap** — record it for the read=write
 | `create_note`, `update_note`, `update_note_content`, `delete_note` | `get_note` / `list_notes` | note fields |
 | `create_note_column`, `update_note_column`, `delete_note_column` | `list_note_columns` | category/column state |
 | `delete_knowledge_graph` | `list_knowledge_graphs` | the graph is GONE from the list (a delete is verified by absence, not presence) |
+| `stop_knowledge_graph_extraction`, `pause_knowledge_graph_extraction`, `resume_knowledge_graph_extraction` | `get_knowledge_graph(graph_id)` / `list_knowledge_graphs` | the graph's `run_state` (running → stopping → stopped/paused; resume → running → idle) |
+| `create_knowledge_graph_edge` | `get_knowledge_graph(graph_id)` / `get_knowledge_graph_node` | the edge is in the graph — read with the **graph** id from the write's own arguments, never the edge id it returned |
 | `create_event`, `update_event`, `delete_event` | `list_events` | event fields |
 | `log_time`, `start_timer`, `stop_timer`, `update_time_entry`, `delete_time_entry` | `list_time_entries` / `get_time_summary` | time entries/totals |
 | `create_quick_proposal`, `update_quick_proposal`, `promote_quick_proposal`, `attach_to_quick_proposal` | `get_quick_proposal` / `list_quick_proposals` | quick-proposal fields |
