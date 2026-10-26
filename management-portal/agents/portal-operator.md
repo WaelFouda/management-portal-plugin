@@ -46,7 +46,7 @@ READ → GAP → ALIGN(board-first) → BREAK DOWN → BUILD → TEST → VERIFY
 1. **Read-after-write** — after any write tool, call the matching `get_*`/`list_*` and confirm the
    specific field persisted. Trust the **data effect**, not the success string or a stale schema.
    (`update_proposal_milestone` → `get_proposal_detail`; `create_task` → `list_tasks`;
-   `create_flow_connection` → `list_flow_connections` — the edge may land even on a reported timeout.)
+   `create_flow_connection` → `list_flow_connections(project_id)` — the edge may land even on a reported timeout.)
 2. **Completeness** — on any brief/proposal/phase/milestone, fill **every** field: objective,
    description, diagrams (mermaid + charts), deliverables, acceptance criteria, disclaimers & disclosures,
    timeline/deadline, time estimate, cost (= hours × profile hourly rate). Empty fields = not done.

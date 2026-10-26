@@ -683,7 +683,7 @@ const REGISTER = [
   ['CANON-KG-DESTRUCTIVE', 'regenerate/delete_knowledge_graph (both destroy nodes+edges)', 'extract_knowledge_graph, the incremental path', null],
   ['CANON-TREE-FIRST', 'any write to a project source file before the task tree and flow board exist', 'create_task + create_subtask + create_flow_cluster + create_flow_connection', null],
   ['CANON-STATUS-SYNC', 'a milestone marked delivered with the task tree unread', 'list_subtasks / list_tasks / get_task', null],
-  ['CANON-FLOW-READ', 'a portal write after a phase boundary with the flow board unread', 'list_flow_clusters + list_flow_connections', null],
+  ['CANON-FLOW-READ', 'a portal write after a phase boundary with the flow board unread', 'list_flow_clusters(project_id) + list_flow_connections(project_id)', null],
   ['CANON-KG-CONSULT', 'implementation, or a portal write after a phase boundary, before a graph is consulted', 'semantic_search_knowledge_graph, ask_knowledge_graph, get_knowledge_graph or a focused interpret_knowledge_graph; no graph → create_knowledge_graph', ['interpret_knowledge_graph', 'create_knowledge_graph', 'extract_knowledge_graph', 'create_journal']],
   ['CANON-JOURNAL-GRAPH', 'a portal write after a phase boundary whose journal lacks "What the graph showed"', 'update_journal/create_journal with that section', ['create_journal', 'update_journal', 'interpret_knowledge_graph']],
   ['CANON-BOARD-FIRST', 'brief/proposal/task writes before the alignment board', 'create_board + create_board_block(type mermaid) + read_board', null],

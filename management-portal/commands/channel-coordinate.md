@@ -103,7 +103,7 @@ project; a heading with nothing under it is worse than no heading.
 
 ## 5. Read before you act
 Read the brief, the proposal, the task tree and the flow board before your first write:
-get_brief, get_proposal_detail, list_tasks + list_subtasks, list_flow_clusters + list_flow_connections.
+get_brief, get_proposal_detail, list_tasks + list_subtasks, list_flow_clusters(project_id) + list_flow_connections(project_id).
 The flow board's clusters and relations are real intent, not decoration.
 
 ## 6. Follow the canon strictly

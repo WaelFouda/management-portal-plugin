@@ -66,8 +66,8 @@ of those reads are in this session, and it names which of the two is missing. Re
 it is one round trip.
 
 Then read what the policy tells you to read — the brief, the proposal, the task tree and the flow board:
-`get_brief`, `get_proposal_detail`, `list_tasks` + `list_subtasks`, `list_flow_clusters` +
-`list_flow_connections`. One `bulk`. The clusters and relations are real intent, not decoration.
+`get_brief`, `get_proposal_detail`, `list_tasks` + `list_subtasks`, `list_flow_clusters(project_id)` +
+`list_flow_connections(project_id)`. One `bulk`. The clusters and relations are real intent, not decoration.
 
 ## 3. Stay reachable
 

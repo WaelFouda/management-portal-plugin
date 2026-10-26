@@ -34,7 +34,7 @@ READ → GAP → ALIGN(board-first) → BREAK DOWN → BUILD → TEST → VERIFY
 
 1. **Read-after-write** — after any write, call the matching `get_*`/`list_*` and confirm the field
    persisted. Trust the **data effect**, not the success string or a stale schema. (`create_flow_connection`
-   → `list_flow_connections`; the edge may land even on a reported timeout.)
+   → `list_flow_connections(project_id)`; the edge may land even on a reported timeout.)
 2. **Completeness** — on any brief/proposal/phase/milestone, fill **every** field: objective, description,
    diagrams (mermaid + charts), deliverables, acceptance criteria, disclaimers & disclosures,
    timeline/deadline, time estimate, cost (= hours × profile hourly rate). Empty fields = not done.
@@ -58,6 +58,8 @@ or the 30-minute deadline) is finished with `resume_knowledge_graph_extraction`,
 and `force:true` only resets a run reported `stale`, never starts a second; journal it under **"What the graph showed"**; and
 turn every gap it reports into a task or a journal "won't fix" line. Gated by `CANON-KG-CONSULT` and
 `CANON-JOURNAL-GRAPH`; full loop in `reference.md` §2b (e).
+A big graph is read whole: `get_knowledge_graph` pages with `node_offset` / `edge_offset` and prints the next-page call,
+and semantic search / `ask_knowledge_graph` cover every node, reporting "Searched X of Y".
 
 ## Some of this is meant to be ENFORCED, not advised — `canon-gates.md`
 

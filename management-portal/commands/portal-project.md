@@ -122,7 +122,7 @@ Do these in this order, and use `bulk` to send each group as one request (canon 
    **Verify:** `list_tasks(project_id)`, `list_subtasks(parent)`.
 8. **Flow board** — `create_flow_cluster(title, task_ids:[…])`, one cluster per phase, then
    `create_flow_connection(source_id, target_id, title)` for every real dependency: order inside a phase
-   **and** the cross-phase ones. **Verify:** `list_flow_clusters`, `list_flow_connections` — the edge can
+   **and** the cross-phase ones. **Verify:** `list_flow_clusters(project_id)`, `list_flow_connections(project_id)` — the edge can
    land even when the call reports a timeout, so read before you retry.
 
 `CANON-TREE-FIRST` refuses implementation edits until at least one task, one subtask, one flow cluster and
@@ -143,7 +143,7 @@ phase>")` have run (§5) — in one `bulk`:
   project_id:<project>, tags:["phase","<phase name>"], logged_at:"<today, YYYY-MM-DD>")` — what was done,
   a **"What the graph showed"** section, the **lessons learnt**, and **anything that must be returned to**.
 - and **read it back**: `list_journals(folder_id:…)` or `get_journal(log_id:…)` / `search_journals`.
-- then `list_flow_clusters` + `list_flow_connections`, and straight into the next phase.
+- then `list_flow_clusters(project_id)` + `list_flow_connections(project_id)`, and straight into the next phase.
 
 Both halves. `CANON-JOURNAL-PHASE` refuses the first portal write after a phase boundary when either the
 write or the read-back is missing, and it names which half it could not find. Neither it nor
@@ -204,7 +204,7 @@ The graph is read **per phase**, not only at close-out:
 - **Phase end, in this order** — `extract_knowledge_graph` + `interpret_knowledge_graph(focus:"<next
   phase>")` (a still-running extract is polled to `idle` first, a `paused` one resumed) → the journal entry
   with its "What the graph showed" section, read back (§4) →
-  `list_flow_clusters` + `list_flow_connections` → the next phase. `CANON-KG-LEARN` reports a phase that
+  `list_flow_clusters(project_id)` + `list_flow_connections(project_id)` → the next phase. `CANON-KG-LEARN` reports a phase that
   passed without the extract + interpret.
 - **Gaps become tasks** — every gap an interpretation reports ("CANDIDATE SURPRISING CONNECTIONS" with no
   edge, "ISOLATED NODES") becomes a `create_task`/`create_subtask`, or a journal line saying "won't fix" and

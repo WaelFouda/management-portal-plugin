@@ -74,8 +74,8 @@ write the blocked journal entry in §5 and end. It never demands an outcome — 
 
 For each phase, in order, and without pausing between them:
 
-1. **Read first** — `get_proposal_detail(project_id)`, `list_tasks`, `list_subtasks`, `list_flow_clusters`,
-   `list_flow_connections`. One `bulk`, one round trip. The flow board's clusters and relations are real
+1. **Read first** — `get_proposal_detail(project_id)`, `list_tasks`, `list_subtasks`, `list_flow_clusters(project_id)`,
+   `list_flow_connections(project_id)`. One `bulk`, one round trip. The flow board's clusters and relations are real
    intent; read them every time, not once at the start.
 2. **Consult the graph about this phase's decision** — `semantic_search_knowledge_graph` or
    `interpret_knowledge_graph(focus:"<the decision this phase takes>")`, before the phase's first write.
@@ -104,7 +104,7 @@ For each phase, in order, and without pausing between them:
    what was learnt and what must be returned to. `CANON-JOURNAL-GRAPH` refuses the first write after the
    boundary until the entry has one (a heading or line with that phrase, or a line starting `graph:`);
    `update_journal` adds it.
-9. **Re-read the flow board** — `list_flow_clusters` + `list_flow_connections`.
+9. **Re-read the flow board** — `list_flow_clusters(project_id)` + `list_flow_connections(project_id)`.
 10. **Gaps become tasks** — every gap the interpretation reports ("CANDIDATE SURPRISING CONNECTIONS" with no
     edge, "ISOLATED NODES") becomes a `create_task`/`create_subtask`, or a journal line saying "won't fix"
     and why (it can go in step 8's entry), by the next boundary. `CANON-KG-GAPS` reports the ones left open.

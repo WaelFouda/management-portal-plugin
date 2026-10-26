@@ -2745,7 +2745,7 @@ function caseJournalGraph() {
 
 function caseKgAdvisories() {
   console.log('\nCANON-KG-LEARN and CANON-KG-GAPS — advise, never block');
-  const gapsResp = 'GRAPH: P (id ' + UUID_G + ')\n\nCANDIDATE SURPRISING CONNECTIONS (computed over the 40 highest-degree nodes):\n'
+  const gapsResp = 'GRAPH: P (id ' + UUID_G + ')\n\nCANDIDATE SURPRISING CONNECTIONS (computed in the database over the 40 largest of the 40 nodes with a stored embedding (cap 1500; all 40 nodes are embedded); 2 candidate pair(s) at cosine ≥ 0.62):\n'
     + '  - Auth [c1] ~ Billing [c2] cosine 0.71 — semantically close, different communities, NO edge between them\n'
     + '  - Cache [c1] ~ Queue [c3] cosine 0.66 — semantically close, different communities, NO edge between them\n\n'
     + 'ISOLATED NODES (1):\n  Legacy importer';

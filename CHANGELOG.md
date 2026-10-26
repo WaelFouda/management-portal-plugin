@@ -3,6 +3,32 @@
 Releases before 1.8.0 are described in the commit history (`plugin vX.Y.Z: …`) and in the
 "Known failure modes" section of [`management-portal/README.md`](management-portal/README.md).
 
+## 1.9.3 — 2026-10-26
+
+### Guidance — read the flow board for the project, not the whole workspace
+
+The HelmOS backend (master `4632b029`) gave `list_flow_connections` and `list_flow_clusters` optional
+`project_id` and `task_id` filters. Unfiltered they return the whole workspace — measured at 190
+connections (~31k chars) and 212 clusters (~66k chars), enough to overflow an agent's context; with
+`project_id` the same reads were ~1.8k and ~1.3k chars. A bare id that is not a project resolves to that
+connection, cluster or task, so read-backs keep working.
+
+- **Every place the plugin tells an agent to read the flow board now names the filter:**
+  `list_flow_clusters(project_id)` + `list_flow_connections(project_id)` in `/portal-continue` (read
+  first, re-read the board), `/portal-project` (verify the board, the phase-boundary order),
+  `/channel-join`, `/channel-coordinate`, the `portal-operator` subagent's read-after-write example, the
+  `SKILL.md` read-after-write example, the phase-boundary order in `reference.md` and `canon-gates.md`,
+  and the `CANON-FLOW-READ` hint in the gate register (`canon-gate.js`).
+- **No gate logic changed.** `CANON-FLOW-READ` matches the two reads by tool name only, so a filtered
+  read clears it exactly as an unfiltered one did.
+- **Knowledge-graph reading (`SKILL.md`):** one line — `get_knowledge_graph` pages with `node_offset` /
+  `edge_offset` and prints the next-page call, and semantic search / `ask_knowledge_graph` cover every
+  node, reporting "Searched X of Y". The backend now reads every node; no plugin text stated the old caps.
+- The selftest's interpret fixture uses the backend's new "CANDIDATE SURPRISING CONNECTIONS (computed in
+  the database over …)" heading instead of the retired "highest-degree" one; the gap parser reads the
+  section, not the heading.
+- The README's post-update check now asks for **1.9.3** (it still said 1.9.1).
+
 ## 1.9.2 — 2026-10-25
 
 ### Canon gates — knowledge-graph extraction runs are controllable, and the brakes are never refused

@@ -241,7 +241,7 @@ cannot hide behind another gate's reason.
 
 **The natural order at a phase boundary**, so the phase gates never queue behind each other: consult
 the graph (and `extract_` + `interpret_` it) → journal with "What the graph showed" and read it back →
-`list_flow_clusters` + `list_flow_connections` → continue the work.
+`list_flow_clusters(project_id)` + `list_flow_connections(project_id)` → continue the work.
 
 ### Compulsions (PostToolUse / Stop — the action already happened)
 

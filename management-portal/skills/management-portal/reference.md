@@ -300,7 +300,7 @@ you decide:
    **won't fix**.
 
 So the order at a phase boundary is: consult (+ extract + interpret) → journal with "What the graph
-showed" + read it back → `list_flow_clusters` + `list_flow_connections` → continue. Consults inside a
+showed" + read it back → `list_flow_clusters(project_id)` + `list_flow_connections(project_id)` → continue. Consults inside a
 `bulk` count, and a consult the parent made is credited on the run, so sub-agents inherit it.
 
 **(f) EFFICIENCY — use `bulk`** — *(gate: `CANON-BULK`, advisory by design)*
