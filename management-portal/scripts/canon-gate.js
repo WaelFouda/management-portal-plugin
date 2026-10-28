@@ -178,7 +178,8 @@ const L = require('./canon-lib.js');
 // meta-tool added at the MCP server layer (backend/routers/mcp_server.py BULK_TOOL_NAME).
 // Count: 257; 263 as of 1.7.8; 271 as of 1.9.2 (generate, check_generation, list_models,
 // read_media, ask_knowledge_graph and the stop_/pause_/resume_knowledge_graph_extraction run
-// controls — re-verified against the backend registry 2026-10-25).
+// controls — re-verified against the backend registry 2026-10-25); 276 as of 1.9.4 (the five
+// cross-session messaging tools — see XSESSION_TOOLS).
 //
 // Regenerate with:
 //   grep -rhoP '(?<=^\s{8}name=")[a-z0-9_]+(?=")' backend/ai/tools/*.py | sort -u
@@ -266,7 +267,10 @@ const PORTAL_TOOLS = new Set([
   // the gates could not see them at all (a tool outside this set is never gated).
   'generate', 'check_generation', 'list_models', 'read_media', 'ask_knowledge_graph',
   'stop_knowledge_graph_extraction', 'pause_knowledge_graph_extraction',
-  'resume_knowledge_graph_extraction'
+  'resume_knowledge_graph_extraction',
+  // 1.9.4 — HelmOS cross-session messaging (Thoth chat session <-> Claude Code session).
+  'register_claude_session', 'check_session_inbox', 'message_thoth_session',
+  'list_thoth_sessions', 'reset_session_link'
 ]);
 
 // ---------------------------------------------------------------------------
@@ -407,6 +411,8 @@ const WRITE_READ_MAP = {
   resume_knowledge_graph_extraction: ['get_knowledge_graph', 'list_knowledge_graphs'],
   set_channel_policy: ['read_channel_policy'],
   create_chat_channel: ['read_chat_channels'],
+  // DELIBERATELY ABSENT (1.9.4): the cross-session messaging tools. See XSESSION_TOOLS below —
+  // none of them has a read that could prove it, so a row here would be a latch.
 };
 
 /**
@@ -510,8 +516,31 @@ function isDeleteWrite(tool) { return /^delete_/.test(String(tool || '')); }
 
 /** Every portal tool that mutates a record — the scope of CANON-ID. */
 const WRITE_PREFIX = /^(create|update|add|delete|remove|set|insert|reorder|complete|promote|attach|approve|reject|log|send|react|edit|resolve|register|require|release|claim|transfer|tag|pin|move|hide|rename|import|generate|regenerate|extract|interpret|stage|leave|stop|pause|resume)_|^(remember)$/;
+/**
+ * CROSS-SESSION MESSAGING IS PLUMBING, NOT PROJECT WORK (1.9.4).
+ *
+ * register_claude_session, check_session_inbox (it marks mail delivered), message_thoth_session and
+ * reset_session_link all change something on the server, and register_/message_ would otherwise be
+ * classed as portal writes by name. They are kept OUT of the write class on purpose:
+ *   · CANON-ID would refuse them. register_claude_session(cc_session_id=…) and
+ *     check_session_inbox(cc_session_id=…) carry THIS session's own id, which arrives from the
+ *     SessionStart hook and the wake-up monitor, never from a portal read — so the id is never in
+ *     the seen set, and every registration would be refused as "fabricated". A message body that
+ *     happens to quote a uuid would be refused the same way.
+ *   · No read can prove them. There is no tool that reads back a registration, a delivered mark,
+ *     a sent cross-session message or a reset link — so a WRITE_READ_MAP row would be an
+ *     obligation with no discharge, the one-way latch this file has paid for seven times.
+ *   · The phase and debt gates would refuse a session's REGISTRATION or its REPLY to a teammate
+ *     because a project journal is unwritten. Being reachable is not work done on the project.
+ * list_thoth_sessions is a plain read and stays one. All five are portal TOOLS, so the ids their
+ * replies carry still enter the seen set.
+ */
+const XSESSION_TOOLS = new Set(['register_claude_session', 'check_session_inbox', 'message_thoth_session',
+  'list_thoth_sessions', 'reset_session_link']);
+
 function isPortalWrite(bare) {
   if (!bare) return false;
+  if (XSESSION_TOOLS.has(bare)) return false;
   if (Object.prototype.hasOwnProperty.call(WRITE_READ_MAP, bare)) return true;
   return WRITE_PREFIX.test(bare) && PORTAL_TOOLS.has(bare);
 }
@@ -2263,6 +2292,9 @@ function modePost(payload) {
     const over = L.overflowText(respFull);
     if (over && over.text) respFull = over.text;
   }
+  // 1.9.4: register_claude_session returns a one-time `inbox_token:` line. It is a secret, and a
+  // token that happens to look like an id would otherwise be harvested into the ledger on disk.
+  respFull = respFull.replace(/inbox_token\s*[:=][^\r\n]*/g, 'inbox_token: [stored by the plugin]');
   let resp = respFull;
   if (resp.length > 65536) resp = resp.slice(0, 65536);
   const ok = !(respRaw && typeof respRaw === 'object' && respRaw.isError);
@@ -3119,7 +3151,7 @@ function main() {
 // assignment below main() that circular require handed back an empty object — the gate's
 // own tests could not see the register they exist to police.
 module.exports = { PORTAL_TOOLS, WRITE_READ_MAP, REGISTER, JOURNAL_CLEARING, BOARD_FIRST_GATED,
-  CLOSEOUT_CLEARING, OTHER_GATE_KEYS, KG_BRAKES, CARD_CAP, DEBT_BUDGET, KG_LEARNING, KG_CONSULT_READS,
+  CLOSEOUT_CLEARING, OTHER_GATE_KEYS, KG_BRAKES, XSESSION_TOOLS, CARD_CAP, DEBT_BUDGET, KG_LEARNING, KG_CONSULT_READS,
   fold, isPortalWrite, isPortalTool, isDeleteWrite, buildCard, standDownExempt, evaluateCall,
   settleCall, carriedDebt, closeoutMissing, closeoutOwed, kgConsulted, kgAdvisories };
 

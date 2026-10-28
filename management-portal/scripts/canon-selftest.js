@@ -659,7 +659,7 @@ function caseLifecycle() {
   const d = cli(['doctor']);
   check('doctor reports the home and the run', /CANON_HOME/.test(d.stdout || '') && /state RUN/.test(d.stdout || ''), d.stdout);
   check('doctor lists armed gates', /ARMED\s+CANON-ID/.test(d.stdout || ''));
-  check('doctor reports the tool count', /portal tools\s+:\s+271 known/.test(d.stdout || ''), (d.stdout || '').split('\n').find((x) => /portal tools/.test(x)));
+  check('doctor reports the tool count', /portal tools\s+:\s+276 known/.test(d.stdout || ''), (d.stdout || '').split('\n').find((x) => /portal tools/.test(x)));
   const c = cli(['run-close']);
   check('run-close closes the run', /closed/.test(c.stdout || ''), c.stdout);
   const d2 = cli(['doctor']);
@@ -684,7 +684,7 @@ function caseTools() {
   fresh();
   const t = cli(['tools']);
   const names = (t.stdout || '').trim().split('\n');
-  check('tools lists 271 portal tools', names.length === 271, 'got ' + names.length);
+  check('tools lists 276 portal tools', names.length === 276, 'got ' + names.length);
   check('bulk is in the list', names.includes('bulk'));
   check('create_project is in the list', names.includes('create_project'));
   check('a foreign tool is not', !names.includes('write_file'));
@@ -3145,6 +3145,76 @@ function caseKgRunControlsReadBack() {
   check('ask_knowledge_graph is a read and owes nothing', a === null, (a || '').slice(0, 160));
 }
 
+function caseXsessionPlumbing() {
+  console.log('\n1.9.4 cross-session messaging is plumbing — never refused, never owes a read-back');
+  const G = require('./canon-gate.js');
+  const XS = ['register_claude_session', 'check_session_inbox', 'message_thoth_session', 'list_thoth_sessions', 'reset_session_link'];
+  for (const t of XS) {
+    check(t + ' is a portal tool', G.PORTAL_TOOLS.has(t) && G.isPortalTool(t));
+    check('  …and is NOT classed as a portal write', !G.isPortalWrite(t));
+    check('  …and has no read-back row (none could prove it)', !Object.prototype.hasOwnProperty.call(G.WRITE_READ_MAP, t));
+  }
+  check('XSESSION_TOOLS is exactly the five', G.XSESSION_TOOLS.size === 5 && XS.every((t) => G.XSESSION_TOOLS.has(t)));
+
+  // This session's OWN id comes from the SessionStart hook, never from a portal read.
+  const OWN = 'dddddddd-4444-4444-8444-dddddddddddd';
+  let sid = fresh();
+  runWithTree(sid, 'P');
+  gate('post', post(sid, MCP + 'update_proposal_milestone', { milestone_id: UUID_B, status: 'delivered' }, 'ok [id: ' + UUID_B + ']'));
+  const ctl = denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: OWN })));
+  check('(control) a portal write with an unseen id after a bare boundary IS refused', Boolean(ctl), (ctl || '(ALLOWED)').slice(0, 140));
+  const calls = {
+    register_claude_session: { name: 'Client Management Platform', cc_session_id: OWN, host_label: 'host' },
+    check_session_inbox: { cc_session_id: OWN },
+    message_thoth_session: { name: 'Planner', message: 'done — see task ' + UUID_C, from_session: 'Client Management Platform' },
+    list_thoth_sessions: { query: 'Plan' },
+    reset_session_link: { cc_session_id: OWN },
+  };
+  for (const t of XS) {
+    const d = denialOf(gate('pre', pre(sid, MCP + t, calls[t])));
+    check('after a bare boundary, ' + t + ' with this session\'s own id is not refused', d === null, (d || '').slice(0, 160));
+  }
+  const inBulk = denialOf(gate('pre', pre(sid, MCP + 'bulk', { calls: [
+    { tool: 'register_claude_session', arguments: calls.register_claude_session },
+    { tool: 'check_session_inbox', arguments: calls.check_session_inbox }] })));
+  check('…and inside a bulk neither is refused', inBulk === null, (inBulk || '').slice(0, 160));
+
+  // A carried read-back debt refuses work, never the plumbing.
+  sid = fresh();
+  cli(RUN_ARGS);
+  seedSeen(sid, UUID_A);
+  leakUnverifiedWrite(sid);
+  gate('prompt', { session_id: sid, cwd: PROJ, hook_event_name: 'UserPromptSubmit', prompt: 'carry on' });
+  check('(control) the read-back debt refuses work',
+    /CANON-DEBT-READ-BACK/.test(denialOf(gate('pre', pre(sid, MCP + 'update_task', { task_id: UUID_A }))) || ''));
+  for (const t of XS) {
+    const d = denialOf(gate('pre', pre(sid, MCP + t, calls[t])));
+    check('with a read-back debt carried, ' + t + ' is not refused', d === null, (d || '').slice(0, 160));
+  }
+
+  // Their replies owe nothing at turn end.
+  for (const t of XS) {
+    sid = fresh();
+    const b = blockOf(gate('post', post(sid, MCP + t, calls[t], 'ok [id: ' + OWN + ']\ninbox_token: tok_SELFTEST_never_real')));
+    check(t + ' opens no read-back obligation', b === null, (b || '').slice(0, 160));
+  }
+
+  // The one-time inbox token never reaches the ledger, even when it is shaped like an id.
+  sid = fresh();
+  const TOK = 'ffffffff-5555-4555-8555-ffffffffffff';
+  gate('post', post(sid, MCP + 'register_claude_session', calls.register_claude_session,
+    'Registered "Client Management Platform".\ninbox_token: ' + TOK));
+  gate('post', post(sid, MCP + 'bulk', { calls: [{ tool: 'register_claude_session', arguments: calls.register_claude_session }] },
+    '[0] register_claude_session ✓\nRegistered.\ninbox_token: ' + TOK + '\nRan 1/1 call(s); 0 failed'));
+  const leaked = [];
+  const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+    const p = path.join(d, e.name);
+    if (e.isDirectory()) walk(p); else if (fs.readFileSync(p, 'utf8').includes(TOK)) leaked.push(p);
+  } };
+  walk(HOME);
+  check('the inbox token is never written to the canon ledger', leaked.length === 0, leaked.join(', '));
+}
+
 function run() {
   console.log('portal-canon selftest — every gate proved on BOTH sides');
   const cases = [caseSessionStart, caseP1, caseP2, caseP3, caseP3Latch, caseP4, caseP5,
@@ -3158,7 +3228,8 @@ function run() {
     caseDebtEscapes, caseDebtCardOverflow, caseDebtHotPath,
     caseKgConsultImplementation, caseKgConsultPhase, caseJournalGraph, caseKgAdvisories,
     caseGapBulkReadsCount, caseGapOverflowStub,
-    caseKgBrakesNeverRefused, caseKgEdgeReadBackTakesTheGraphId, caseKgAskIsAConsult, caseKgRunControlsReadBack];
+    caseKgBrakesNeverRefused, caseKgEdgeReadBackTakesTheGraphId, caseKgAskIsAConsult, caseKgRunControlsReadBack,
+    caseXsessionPlumbing];
   for (const c of cases) {
     try { c(); } catch (e) { fail++; failures.push(c.name + ' threw: ' + e.message); console.log('  FAIL  ' + c.name + ' threw: ' + e.message); }
   }

@@ -36,3 +36,9 @@ MODULES (1.8.0; 1.9.0 adds the plan with progress bars, the gate panel, the comm
 a gate band above the prompt, cards for portal tool results and a Team Chat wake-up. An older Claude Code
 ignores the key. NOTHING in the module enforces anything — a mod hook that throws fails OPEN — so every gate
 stays in the command hooks below. See hooks/mods/register.tsx and the README "Mods" section.
+
+CROSS-SESSION MESSAGING (1.9.4) adds three command hooks, all routed through scripts/xsession.js and all
+fail-open (any error exits 0 with no output): SessionStart `session-start` (names the session, asks once for
+register_claude_session), UserPromptSubmit `prompt` (fire-and-forget loop-guard reset) and PostToolUse
+`post` on mcp__.*__(register_claude_session|bulk) (stores the inbox token, never echoes it). The wake-up
+itself is not a hook: it is the `helmos-inbox` monitor in monitors/monitors.json.

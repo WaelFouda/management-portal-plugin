@@ -327,6 +327,7 @@ stores that an entry happened and never a word of what it said.**
 | `team-chat-watcher` **subagent** | The one you **spawn**: the background loop that performs the blocking `await_my_turn` wait. Spawning it is what actually makes you reachable. |
 | `/rearm-watch` **command** | What a **human types** to join a channel and keep watching it, or to read the roster by hand. |
 | **mod** (`hooks/mods/`, Claude Code ≥ 2.1.287) | Optional extras: the run cockpit (plan with progress bars), status line, gate panel, command launcher with presets, band, result cards, notifications, Team Chat wake-up and the idle-run nudge. **Never enforcement** — see *Mods* below. |
+| **cross-session messaging** (1.9.4) | `scripts/xsession.js` hooks — `SessionStart` names this session and asks once for `register_claude_session`, `PostToolUse` stores the returned inbox token (0600, never echoed), `UserPromptSubmit` tells the backend a human typed (loop-guard reset, fire-and-forget) — and the `helmos-inbox` **monitor** (`monitors/monitors.json` → `scripts/xsession-monitor.js`), which long-polls the backend and prints one wake-up line when a HelmOS Thoth session messages this one. Tested by `node scripts/xsession-selftest.js`. Monitors do not run under `-p`. |
 | `scripts/watch-alarm.js` | The ABSENT alarm and turn-end gate. Node, no dependencies. **Needs one manual step — below.** |
 | **watch recorder + preflight hooks** | PostToolUse records that this machine really waited; SessionStart says when the alarm is not armed. |
 
@@ -420,6 +421,7 @@ Code; the gates are unaffected either way.
 claude plugin validate <plugin dir>     # what the module hooks and calls, as the engine reads it
 claude plugin test <plugin dir>         # hooks/mods/tests/*.test.ts against the real engine, terminal + desktop
 node scripts/canon-gate.js selftest     # the gates, unchanged in behaviour and still fully green
+node scripts/xsession-selftest.js       # cross-session messaging: hooks, token capture, monitor dedupe/backoff
 ```
 
 ## Install and sign in
@@ -644,7 +646,7 @@ remember.
 > ```
 >
 > Then **reload** (`/reload-plugins`) or restart Claude Code, and **verify before you trust it**: run
-> `/plugin` and confirm the installed version reads **1.9.3**. If it does not, you are running older code
+> `/plugin` and confirm the installed version reads **1.9.4**. If it does not, you are running older code
 > no matter what the repository says.
 >
 > **This is per machine.** A bump reaches nobody until each machine updates.
