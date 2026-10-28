@@ -3,7 +3,7 @@
 Releases before 1.8.0 are described in the commit history (`plugin vX.Y.Z: …`) and in the
 "Known failure modes" section of [`management-portal/README.md`](management-portal/README.md).
 
-## 1.9.4 — unreleased
+## 1.9.4 — 2026-10-29
 
 ### Cross-session messaging — a HelmOS Thoth session and this session message each other by name
 
