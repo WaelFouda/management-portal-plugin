@@ -168,13 +168,21 @@ function bareTool(raw) {
   return s.startsWith('mcp__') && i > 4 ? s.slice(i + 2) : s;
 }
 
+/**
+ * The inbox token goes in this header, never in the URL: the backend's access log prints the full
+ * request line, query string included, so a `?token=` URL put the live token in the server log on
+ * every long-poll (measured in the 2026-10-29 live E2E).
+ */
+const TOKEN_HEADER = 'X-Inbox-Token';
+
 /** A tiny HTTP(S) request with a hard timeout. Resolves {status, body} or rejects. */
-function request(method, urlStr, timeoutMs) {
+function request(method, urlStr, timeoutMs, extraHeaders) {
   return new Promise((resolve, reject) => {
     let u;
     try { u = new URL(urlStr); } catch (e) { reject(e); return; }
     const mod = u.protocol === 'http:' ? require('http') : require('https');
-    const req = mod.request(u, { method, headers: { 'accept': 'application/json', 'content-length': 0 } }, (res) => {
+    const headers = Object.assign({ 'accept': 'application/json', 'content-length': 0 }, extraHeaders || {});
+    const req = mod.request(u, { method, headers }, (res) => {
       let body = '';
       res.setEncoding('utf8');
       res.on('data', (c) => { if (body.length < 65536) body += c; });
@@ -187,10 +195,10 @@ function request(method, urlStr, timeoutMs) {
   });
 }
 
-/** POST /api/v1/agent-mail/human?token=… — resolves true on 2xx, false otherwise. Never throws. */
+/** POST /api/v1/agent-mail/human (token in X-Inbox-Token) — true on 2xx, false otherwise. Never throws. */
 async function postHuman(origin, token, timeoutMs) {
   try {
-    const r = await request('POST', origin + '/api/v1/agent-mail/human?token=' + encodeURIComponent(token), timeoutMs || 2000);
+    const r = await request('POST', origin + '/api/v1/agent-mail/human', timeoutMs || 2000, { [TOKEN_HEADER]: token });
     return r.status >= 200 && r.status < 300;
   } catch (_) { return false; }
 }
@@ -323,6 +331,7 @@ async function modeHumanPost(file) {
 module.exports = {
   safeId, dataDir, sessionFile, tokenFile, readJson, writeAtomic, readToken, listAgents, parseAgents,
   resolveName, parseInboxToken, backendOrigin, bareTool, request, postHuman, registerInstruction,
+  TOKEN_HEADER,
 };
 
 if (require.main === module) {

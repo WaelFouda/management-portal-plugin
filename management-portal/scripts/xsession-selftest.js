@@ -220,11 +220,13 @@ function server(handler) {
 async function caseHumanReset() {
   console.log('\nhuman reset (UserPromptSubmit)');
   const seen = [];
-  const s = await server((req, res) => { seen.push(req.method + ' ' + req.url); res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"ok":true}'); });
+  const seenTok = [];
+  const s = await server((req, res) => { seen.push(req.method + ' ' + req.url); seenTok.push(req.headers['x-inbox-token']); res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"ok":true}'); });
   const base = 'http://127.0.0.1:' + s.address().port;
   process.env.HELMOS_XSESSION_BASE = base;
   check('postHuman resolves true on 200', await X.postHuman(X.backendOrigin(), TOKEN, 2000) === true);
-  check('…as POST /api/v1/agent-mail/human?token=…', seen[0] === 'POST /api/v1/agent-mail/human?token=' + encodeURIComponent(TOKEN), seen[0]);
+  check('…as POST /api/v1/agent-mail/human, token NOT in the URL', seen[0] === 'POST /api/v1/agent-mail/human', seen[0]);
+  check('…but in the X-Inbox-Token header', seenTok[0] === TOKEN);
 
   const data = tmpData();
   fs.mkdirSync(path.join(data, 'xsession'), { recursive: true });
@@ -260,9 +262,11 @@ async function caseMonitorLoop() {
   let calls = 0;
   let pendingAfter = Date.now() + 2500;
   const urls = [];
+  const toks = [];
   const s = await server((req, res) => {
     urls.push(req.url);
-    const tok = new URL(req.url, 'http://x').searchParams.get('token');
+    const tok = req.headers['x-inbox-token'];
+    toks.push(tok);
     if (tok === 'tok_SELFTEST_stale') { res.writeHead(401); res.end('{"detail":"bad token"}'); return; }
     calls++;
     const wait = Date.now() < pendingAfter ? Math.min(800, pendingAfter - Date.now()) : 0;
@@ -302,8 +306,10 @@ async function caseMonitorLoop() {
   check('  …naming check_session_inbox with this session id', (lines[0] || '').includes('check_session_inbox(cc_session_id="' + SID + '")'));
   check('the token never appears on stdout', !out.includes(ROTATED) && !out.includes('tok_SELFTEST_stale'));
   check('…nor on stderr', !err.includes(ROTATED) && !err.includes('tok_SELFTEST_stale'), err);
-  check('it re-read the token file after the 401', urls.some((u) => u.includes(encodeURIComponent(ROTATED))));
-  check('it long-polls /api/v1/agent-mail/wait with timeout=25', urls.some((u) => /^\/api\/v1\/agent-mail\/wait\?token=.+&timeout=25$/.test(u)), urls[0]);
+  check('it re-read the token file after the 401', toks.includes(ROTATED));
+  check('it long-polls /api/v1/agent-mail/wait?timeout=25', urls.some((u) => u === '/api/v1/agent-mail/wait?timeout=25'), urls[0]);
+  check('no URL ever carries a token (it rides in X-Inbox-Token)', urls.every((u) => !/token=/.test(u)
+    && !u.includes(ROTATED) && !u.includes('tok_SELFTEST_stale')), urls);
   check('it did not spin (' + calls + ' accepted polls in ~10 s)', calls < 12, calls);
 }
 

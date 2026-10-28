@@ -25,7 +25,7 @@
  * It re-resolves on every cycle, so a record written after the monitor started is picked up.
  *
  * THE LOOP: wait (polling the files every few seconds) until the session has a token, then long-poll
- *   GET /api/v1/agent-mail/wait?token=…&timeout=25
+ *   GET /api/v1/agent-mail/wait?timeout=25   (token in the X-Inbox-Token header, never the URL)
  * → {"pending": N, "from": [...]} prints ONE line, deduped by the Notifier below; {"pending":0} polls
  * again; 401 re-reads the token file (re-registration rotates it); network errors back off 5 → 60 s.
  */
@@ -215,8 +215,8 @@ async function main() {
     const started = Date.now();
     let res;
     try {
-      res = await X.request('GET', origin + '/api/v1/agent-mail/wait?token=' + encodeURIComponent(token)
-        + '&timeout=' + WAIT_TIMEOUT_S, (WAIT_TIMEOUT_S + 15) * 1000);
+      res = await X.request('GET', origin + '/api/v1/agent-mail/wait?timeout=' + WAIT_TIMEOUT_S,
+        (WAIT_TIMEOUT_S + 15) * 1000, { [X.TOKEN_HEADER]: token });
     } catch (e) {
       const d = backoff.next();
       log('wait failed (' + ((e && e.code) || (e && e.message) || 'error') + '); retrying in ' + Math.round(d / 1000) + ' s');

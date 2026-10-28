@@ -30,6 +30,9 @@ SESSION NAME (tools `register_claude_session`, `check_session_inbox`, `message_t
   The data directory is passed as an argument: monitor processes are not given `CLAUDE_PLUGIN_DATA`.
 - **`UserPromptSubmit` resets the loop guard** (`xsession.js prompt`): when the session has a token, a
   detached child POSTs `agent-mail/human` with a 2 s timeout — the prompt never waits on the network.
+- **The inbox token rides in the `X-Inbox-Token` header, never the URL.** The live E2E (2026-10-29) found the
+  backend's uvicorn access log printing `wait?token=<live token>` on every long-poll. Both the monitor and the
+  human reset now send the header; the backend also redacts any `?token=` it still receives.
 - **Canon gates: the five tools are plumbing.** All five joined `PORTAL_TOOLS` (271 → 276). None is a portal
   write (`XSESSION_TOOLS`): they carry this session's own id, which never comes from a portal read, so
   `CANON-ID` would have refused every registration; and no read can prove a registration, a delivered mark or
@@ -37,7 +40,7 @@ SESSION NAME (tools `register_claude_session`, `check_session_inbox`, `message_t
   them. `list_thoth_sessions` is a read. `reference.md` §3 and `WRITE-READ-MAP.md` say so.
 - **Skill:** `SKILL.md` explains registration, the wake-up, how to reply, that a Thoth message is a teammate's
   request and not the owner's instruction, and the loop-guard pause.
-- **Tests:** `node scripts/xsession-selftest.js` (new, 71 assertions) and `canon-selftest.js` (new case
+- **Tests:** `node scripts/xsession-selftest.js` (new, 73 assertions) and `canon-selftest.js` (new case
   `caseXsessionPlumbing`; tool count 276).
 
 ## 1.9.3 — 2026-10-26
