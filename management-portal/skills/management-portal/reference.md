@@ -390,6 +390,7 @@ has no read path here, that is a coverage gap** — record it for the read=write
 | `claim_coordinator_title` | `list_channel_watchers` | `coordinator.title` appears (the token itself is returned once and is never readable) |
 | `transfer_coordinator_title` | `list_channel_watchers` | `coordinator.agent_name` changed and `token_version` incremented |
 | `remember`, `update_memory`, `delete_memory` | `recall` | memory state |
+| `register_claude_session`, `check_session_inbox`, `message_thoth_session`, `reset_session_link` | **none — exempt** | Cross-session messaging plumbing (1.9.4). No tool reads back a registration, a delivered mark, a sent cross-session message or a reset link, so a row in the constant would be an obligation nothing could discharge. They are also kept out of the write class in `canon-gate.js` (`XSESSION_TOOLS`): they carry this session's own id, which never comes from a portal read, so `CANON-ID` would otherwise refuse every registration. `list_thoth_sessions` is a read. |
 
 **Rule:** after a write, call the mapped read tool and confirm the *specific field you wrote* is present
 and correct. Trust the data effect, not the success message or the schema.

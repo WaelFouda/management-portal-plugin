@@ -21,6 +21,15 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/xsession.js\" session-start",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -29,6 +38,15 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/canon-gate.js\" prompt",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/xsession.js\" prompt",
             "timeout": 5
           }
         ]
@@ -63,6 +81,16 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/watch-alarm.js\" record",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*__(register_claude_session|bulk)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/xsession.js\" post",
             "timeout": 5
           }
         ]

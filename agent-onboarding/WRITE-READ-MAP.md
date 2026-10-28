@@ -38,6 +38,7 @@
 | `create_scheduling_link`, `approve/reject_scheduling_request` | `list_scheduling_links` / `list_scheduling_requests` | scheduling state |
 | `send_chat_message`, `send_dm_message`, `send_inbox_message`, `reply_to_inbox_message`, `forward_inbox_message`, `forward_chat_message` | `read_channel_messages` / `read_dm_messages` / `read_inbox` | message posted. A FORWARD is labelled with who originally wrote it, so a quote cannot arrive as your own words; an inbox REPLY goes to the original sender only, never reply-all. |
 | `remember`, `update_memory`, `delete_memory` | `recall` | memory state |
+| `register_claude_session`, `check_session_inbox`, `message_thoth_session`, `reset_session_link` | **none — exempt** | Cross-session messaging plumbing (1.9.4): nothing reads back a registration, a delivered mark, a sent cross-session message or a reset link. Kept out of the write class in `canon-gate.js` (`XSESSION_TOOLS`). `list_thoth_sessions` is a read. |
 
 **Rule:** after a write, call the mapped read tool and confirm the *specific field you wrote* is
 present and correct. Trust the data effect, not the success message or the schema.

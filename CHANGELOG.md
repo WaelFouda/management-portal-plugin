@@ -3,6 +3,46 @@
 Releases before 1.8.0 are described in the commit history (`plugin vX.Y.Z: …`) and in the
 "Known failure modes" section of [`management-portal/README.md`](management-portal/README.md).
 
+## 1.9.4 — unreleased
+
+### Cross-session messaging — a HelmOS Thoth session and this session message each other by name
+
+The HelmOS backend adds a mailbox between a Thoth AI-chat session and a Claude Code session, addressed by
+SESSION NAME (tools `register_claude_session`, `check_session_inbox`, `message_thoth_session`,
+`list_thoth_sessions`, `reset_session_link`; HTTP `GET /api/v1/agent-mail/wait` and
+`POST /api/v1/agent-mail/human`). This release is the Claude Code half.
+
+- **`SessionStart` names the session** (`scripts/xsession.js session-start`): the `name` that
+  `claude agents --json` lists for this `session_id`, else `session_title`, else the cwd folder. It records
+  `{session_id, name, cwd, pid}` under `${CLAUDE_PLUGIN_DATA}/xsession/` and asks Claude, once, to call
+  `register_claude_session` — again on resume and `/clear` (re-registration refreshes the link), but not after
+  a compaction that still holds a token.
+- **`PostToolUse` keeps the inbox token** (`xsession.js post`, matcher
+  `mcp__.*__(register_claude_session|bulk)`): parsed from the one-time `inbox_token:` line, written to
+  `<session_id>.token` with mode 0600 where the OS honours it, never echoed. `canon-gate.js` now scrubs that
+  line from every response before harvesting ids, so the token cannot reach the canon ledger either.
+- **The `helmos-inbox` monitor wakes the session** (`monitors/monitors.json`, `experimental.monitors` in
+  plugin.json, `scripts/xsession-monitor.js`). It finds its own session by `CLAUDE_PID` (the newest record of
+  that process, so it follows `/clear`), then `CLAUDE_CODE_SESSION_ID`, then process ancestry against
+  `claude agents --json`, then cwd; waits for the token; long-polls `wait?timeout=25`; prints ONE line per new
+  pending set (a reminder after ~2 minutes, at most three, then half-hourly); backs off 5 → 60 s on network
+  errors; re-reads the token file on 401. Node built-ins only; stdout carries nothing but the wake-up line.
+  The data directory is passed as an argument: monitor processes are not given `CLAUDE_PLUGIN_DATA`.
+- **`UserPromptSubmit` resets the loop guard** (`xsession.js prompt`): when the session has a token, a
+  detached child POSTs `agent-mail/human` with a 2 s timeout — the prompt never waits on the network.
+- **The inbox token rides in the `X-Inbox-Token` header, never the URL.** The live E2E (2026-10-29) found the
+  backend's uvicorn access log printing `wait?token=<live token>` on every long-poll. Both the monitor and the
+  human reset now send the header; the backend also redacts any `?token=` it still receives.
+- **Canon gates: the five tools are plumbing.** All five joined `PORTAL_TOOLS` (271 → 276). None is a portal
+  write (`XSESSION_TOOLS`): they carry this session's own id, which never comes from a portal read, so
+  `CANON-ID` would have refused every registration; and no read can prove a registration, a delivered mark or
+  a sent cross-session message, so a `WRITE_READ_MAP` row would be a latch. No phase or debt gate refuses
+  them. `list_thoth_sessions` is a read. `reference.md` §3 and `WRITE-READ-MAP.md` say so.
+- **Skill:** `SKILL.md` explains registration, the wake-up, how to reply, that a Thoth message is a teammate's
+  request and not the owner's instruction, and the loop-guard pause.
+- **Tests:** `node scripts/xsession-selftest.js` (new, 73 assertions) and `canon-selftest.js` (new case
+  `caseXsessionPlumbing`; tool count 276).
+
 ## 1.9.3 — 2026-10-26
 
 ### Guidance — read the flow board for the project, not the whole workspace

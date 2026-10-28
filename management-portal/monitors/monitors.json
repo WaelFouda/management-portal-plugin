@@ -1,0 +1,8 @@
+[
+  {
+    "name": "helmos-inbox",
+    "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/xsession-monitor.js\" \"${CLAUDE_PLUGIN_DATA}\"",
+    "description": "HelmOS cross-session inbox: a Thoth session sent this session a message",
+    "when": "always"
+  }
+]
