@@ -4,15 +4,17 @@
  *
  * A HelmOS Thoth chat session and this Claude Code session message each other by SESSION NAME.
  * The backend keeps the mailbox; this file only gives the session a name, keeps its inbox token,
- * and tells the backend when a human typed. The wake-up itself is xsession-monitor.js, which Claude
- * arms with the Monitor tool when these hooks ask for it (see ARMING below).
+ * and tells the backend when a human typed (only then — see isHumanPrompt). The wake-up itself is
+ * xsession-monitor.js, which Claude arms with the Monitor tool when these hooks ask for it (see
+ * ARMING below).
  *
  *   node xsession.js session-start   SessionStart  — resolve the display name, record
  *                                    {session_id, name, cwd, pid}, ask Claude to register
  *   node xsession.js post            PostToolUse on register_claude_session (and bulk) —
  *                                    capture `inbox_token:` into <session_id>.token
- *   node xsession.js prompt          UserPromptSubmit — fire-and-forget POST agent-mail/human
- *                                    (a human typed, so the loop guard resets)
+ *   node xsession.js prompt          UserPromptSubmit — fire-and-forget POST agent-mail/human, so
+ *                                    the loop guard resets — only for a prompt a human typed, never
+ *                                    for a monitor wake, task notice or peer message (1.9.6)
  *   node xsession.js stop            Stop — once per 30 minutes, block the turn end while a
  *                                    registered session has no live inbox monitor
  *
@@ -472,6 +474,39 @@ async function modePost() {
     + 'running for it will wake it when a Thoth session sends a message. No need to repeat the token.');
 }
 
+/**
+ * Did a human type this prompt? UserPromptSubmit also fires for turns no human started: the inbox
+ * monitor's wake (a Monitor task-notification — exactly how a Thoth message wakes this session),
+ * background-task completions, peer cross-session messages, /loop and scheduled wakeups. Resetting the
+ * loop guard on those meant every Thoth→Claude wake zeroed ai_streak and the guard could never trip.
+ *
+ * Measured 2026-10-30 (claude -p with a stdin-dumping hook, CLI 2.1.291 and desktop 2.1.309): the
+ * payload carries session_id, transcript_path, cwd, prompt_id, permission_mode, hook_event_name and
+ * prompt — no origin. The 2.1.309 schema already declares an optional `source` ("Payloads may omit it
+ * while the field rolls out"); the transcript's `origin.kind` is honoured too in case it ever appears.
+ *   · source 'user' / 'sdk' → human. 'sdk' is every non-interactive entrypoint, which includes the
+ *     desktop app, where a human types every prompt — so it must not be read as a machine.
+ *   · source 'system' / 'loop_wakeup' / 'schedule_wakeup' / 'poll_event' → not human.
+ *   · origin.kind → only 'human' is human.
+ *   · otherwise the text: a prompt whose trimmed start is one of MACHINE_PROMPT_MARKERS is not human.
+ * Anything else counts as human, as before: a real human is never taken for a machine.
+ */
+const MACHINE_SOURCES = new Set(['system', 'loop_wakeup', 'schedule_wakeup', 'poll_event']);
+const HUMAN_SOURCES = new Set(['user', 'sdk']);
+const MACHINE_PROMPT_MARKERS = ['<task-notification', '<cross-session-message', '[SYSTEM NOTIFICATION',
+  '<teammate-message', '<artifact-room-event', '<<autonomous-loop'];
+
+function isHumanPrompt(payload) {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const origin = p.origin && typeof p.origin === 'object' ? p.origin.kind : p.origin;
+  if (typeof origin === 'string' && origin) return origin === 'human';
+  const source = typeof p.source === 'string' ? p.source : '';
+  if (MACHINE_SOURCES.has(source)) return false;
+  if (HUMAN_SOURCES.has(source)) return true;
+  const text = typeof p.prompt === 'string' ? p.prompt.trim() : '';
+  return !MACHINE_PROMPT_MARKERS.some((m) => text.startsWith(m));
+}
+
 async function modePrompt() {
   const raw = await readStdin();
   let payload = {};
@@ -480,14 +515,17 @@ async function modePrompt() {
   const dir = dataDir();
   if (!sid || !dir || process.env.HELMOS_XSESSION === 'off') return quiet();
   if (!fs.existsSync(tokenFile(dir, sid))) return quiet();
+  // Only a prompt a human typed resets the loop guard; a wake, a peer message or a task notice must not.
   // Fire and forget: a detached child makes the request, so the prompt never waits on the network.
   // The token travels by FILE PATH, never on a command line where a process listing would show it.
-  try {
-    const child = spawn(process.execPath, [__filename, 'human-post', tokenFile(dir, sid)], {
-      detached: true, stdio: 'ignore', windowsHide: true, env: process.env,
-    });
-    child.unref();
-  } catch (_) { /* never fail the prompt */ }
+  if (isHumanPrompt(payload)) {
+    try {
+      const child = spawn(process.execPath, [__filename, 'human-post', tokenFile(dir, sid)], {
+        detached: true, stdio: 'ignore', windowsHide: true, env: process.env,
+      });
+      child.unref();
+    } catch (_) { /* never fail the prompt */ }
+  }
   if (!isDisarmed(dir, sid) && !monitorState(dir, sid).live
       && takeNudge(dir, sid, 'prompt', PROMPT_NUDGE_MS)) {
     return context('UserPromptSubmit', '[helmos-xsession] No HelmOS inbox monitor is watching this session, so a '
@@ -645,7 +683,7 @@ module.exports = {
   safeId, dataDir, sessionFile, tokenFile, readJson, writeAtomic, readToken, listAgents, parseAgents,
   resolveName, parseInboxToken, backendOrigin, bareTool, request, postHuman, registerInstruction,
   readRecords, pickSession, pidAlive, monitorState, isDisarmed, takeNudge, lockFile, disarmFile, nudgeFile,
-  monitorCommand, armCall, dataBaseCandidates, resolveSession, stopBlocks,
+  monitorCommand, armCall, dataBaseCandidates, resolveSession, stopBlocks, isHumanPrompt,
   TOKEN_HEADER, LOCK_FRESH_MS, PROMPT_NUDGE_MS, STOP_NUDGE_MS, MONITOR_DESCRIPTION, MONITOR_TIMEOUT_MS,
 };
 

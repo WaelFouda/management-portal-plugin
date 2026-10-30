@@ -3,6 +3,36 @@
 Releases before 1.8.0 are described in the commit history (`plugin vX.Y.Z: …`) and in the
 "Known failure modes" section of [`management-portal/README.md`](management-portal/README.md).
 
+## 1.9.6 — 2026-10-30
+
+### Cross-session messaging — the loop guard could never trip
+
+**Defect, measured in production.** The `UserPromptSubmit` hook (`xsession.js prompt`) told the backend "a human
+typed" on **every** prompt, and that resets the loop guard (`ai_streak = 0`, un-pause). But `UserPromptSubmit`
+also fires for turns no human started: the inbox monitor's wake (a Monitor task-notification — exactly how a
+Thoth message wakes this session), background-task completions and peer cross-session messages. So every
+Thoth→Claude wake zeroed the streak. After several Thoth↔Claude exchanges with nobody typing, the link's
+`ai_streak` read 0: the guard that pauses AI↔AI ping-pong could never trip.
+
+- **Only a human-typed prompt resets the guard** (`isHumanPrompt` in `scripts/xsession.js`). The arming
+  reminder still fires on every prompt, wakes included.
+- **What the hook actually receives.** Measured 2026-10-30 with a stdin-dumping `UserPromptSubmit` hook under
+  `claude -p` (CLI 2.1.291 and desktop 2.1.309): `session_id`, `transcript_path`, `cwd`, `prompt_id`,
+  `permission_mode`, `hook_event_name`, `prompt` — no origin field. The 2.1.309 hook schema declares an
+  optional `source` (`user`, `sdk`, `system`, `loop_wakeup`, `schedule_wakeup`, `poll_event`) that is not
+  sent yet. So the rule is:
+  - `origin.kind` present → only `human` counts;
+  - `source` `system` / `loop_wakeup` / `schedule_wakeup` / `poll_event` → not human; `user` / `sdk` → human
+    (`sdk` is every non-interactive entrypoint, the desktop app included, where a human types every prompt);
+  - otherwise the text: a prompt whose trimmed start is `<task-notification`, `<cross-session-message`,
+    `[SYSTEM NOTIFICATION`, `<teammate-message`, `<artifact-room-event` or `<<autonomous-loop` is not human;
+  - anything else is human, as before — a real human is never taken for a machine. A scheduled task whose
+    stored prompt is plain text still looks human until `source` ships.
+- **Tests** (`scripts/xsession-selftest.js`): task-notification, peer message, banner, `source: system` and
+  `origin.kind` task-notification/peer prompts send no reset; plain human, `origin.kind: human`, `source: sdk`
+  and a human prompt that merely mentions `<task-notification>` do; a wake still gets the arming reminder.
+  The new machine-prompt checks fail against 1.9.5.
+
 ## 1.9.5 — 2026-10-30
 
 ### Cross-session messaging — Claude arms the inbox monitor, because the platform does not

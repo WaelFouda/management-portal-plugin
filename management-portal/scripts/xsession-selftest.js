@@ -242,6 +242,42 @@ async function caseHumanReset() {
   check('…and the reset reached the server (fired by a detached child)', seen.length === before + 1 && /^POST \/api\/v1\/agent-mail\/human/.test(seen[seen.length - 1] || ''), seen.slice(before));
   check('…without the hook waiting on it (' + took + ' ms)', took < 3000, took);
 
+  // Only a human-typed prompt resets the loop guard. A monitor wake, a task notice or a peer message
+  // must not, or every Thoth→Claude wake zeroes ai_streak and the guard never trips.
+  const machine = {
+    'a task-notification (the inbox monitor\'s wake)': { prompt: '<task-notification>\n<task-id>b1x9</task-id>\n<status>running</status>' },
+    'a peer cross-session-message': { prompt: '  <cross-session-message from="bridge:abc" name="Thoth">hello</cross-session-message>' },
+    'a [SYSTEM NOTIFICATION banner': { prompt: '[SYSTEM NOTIFICATION - NOT USER INPUT] task finished' },
+    'source "system"': { prompt: 'looks like plain text', source: 'system' },
+    'origin.kind "task-notification"': { prompt: 'looks like plain text', origin: { kind: 'task-notification', producer: 'session-task' } },
+    'origin.kind "peer"': { prompt: 'looks like plain text', origin: { kind: 'peer', from: 'bridge:abc' } },
+  };
+  for (const label of Object.keys(machine)) {
+    const b = seen.length;
+    const rm = hook('prompt', Object.assign({ session_id: SID, hook_event_name: 'UserPromptSubmit' }, machine[label]),
+      { CLAUDE_PLUGIN_DATA: data, HELMOS_XSESSION_BASE: base });
+    await new Promise((z) => setTimeout(z, 800));
+    check(label + ' → no reset, hook still exits 0 silently', seen.length === b && rm.code === 0 && rm.stdout === '', seen.slice(b));
+  }
+  const human = {
+    'a plain human prompt': { prompt: 'please check the inbox' },
+    'a human prompt that only MENTIONS <task-notification>': { prompt: 'what is a <task-notification> anyway?' },
+    'origin.kind "human" (even with a machine-looking text)': { prompt: '<task-notification> pasted by me', origin: { kind: 'human' } },
+    'source "sdk" (the desktop app types through the SDK)': { prompt: 'hi', source: 'sdk' },
+  };
+  for (const label of Object.keys(human)) {
+    const b = seen.length;
+    hook('prompt', Object.assign({ session_id: SID, hook_event_name: 'UserPromptSubmit' }, human[label]),
+      { CLAUDE_PLUGIN_DATA: data, HELMOS_XSESSION_BASE: base });
+    for (let i = 0; i < 40 && seen.length === b; i++) await new Promise((z) => setTimeout(z, 100));
+    check(label + ' → resets', seen.length === b + 1 && /^POST \/api\/v1\/agent-mail\/human/.test(seen[seen.length - 1] || ''), seen.slice(b));
+  }
+  check('isHumanPrompt: no prompt at all still counts as human (never mistake a human for a machine)', X.isHumanPrompt({}) === true && X.isHumanPrompt(null) === true);
+  check('isHumanPrompt: loop / schedule wakeups and <<autonomous-loop>> are not human',
+    !X.isHumanPrompt({ prompt: 'x', source: 'loop_wakeup' }) && !X.isHumanPrompt({ prompt: 'x', source: 'schedule_wakeup' })
+    && !X.isHumanPrompt({ prompt: '<<autonomous-loop-dynamic>>' }));
+  check('isHumanPrompt: source "user" is human', X.isHumanPrompt({ prompt: '<task-notification>', source: 'user' }) === true);
+
   const none = tmpData();
   const before2 = seen.length;
   hook('prompt', { session_id: SID, prompt: 'hi' }, { CLAUDE_PLUGIN_DATA: none, HELMOS_XSESSION_BASE: base });
@@ -542,6 +578,9 @@ async function caseHookNudges() {
   check('…nor 9 minutes later', hook('prompt', { session_id: SID, prompt: 'hi' }, env(data)).stdout === '');
   setNudge(data, 'prompt', X.PROMPT_NUDGE_MS + 1000);
   check('…but again after 10 minutes', ctxOf(hook('prompt', { session_id: SID, prompt: 'hi' }, env(data))).includes(call(data)));
+  setNudge(data, 'prompt', X.PROMPT_NUDGE_MS + 1000);
+  check('…and on a wake too: a task-notification prompt (which resets nothing) still gets the reminder',
+    ctxOf(hook('prompt', { session_id: SID, prompt: '<task-notification>\n<task-id>b1x9</task-id>' }, env(data))).includes(call(data)));
   setNudge(data, 'prompt', X.PROMPT_NUDGE_MS + 1000);
   liveLock(data);
   check('no reminder while a monitor is live', hook('prompt', { session_id: SID, prompt: 'hi' }, env(data)).stdout === '');

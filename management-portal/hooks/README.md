@@ -44,7 +44,9 @@ CROSS-SESSION MESSAGING (1.9.4) adds three command hooks, all routed through scr
 fail-open (any error exits 0 with no output): SessionStart `session-start` (names the session, asks once for
 register_claude_session), UserPromptSubmit `prompt` (fire-and-forget loop-guard reset) and PostToolUse
 `post` on mcp__.*__(register_claude_session|bulk) (stores the inbox token, never echoes it). The wake-up
-itself is not a hook: it is scripts/xsession-monitor.js.
+itself is not a hook: it is scripts/xsession-monitor.js. Since 1.9.6 the reset is sent only for a prompt a
+human typed: UserPromptSubmit also fires for a monitor wake (a task-notification), a peer
+cross-session-message and other machine turns, and those must not reset the guard (isHumanPrompt).
 
 THE MONITOR IS ARMED BY CLAUDE (1.9.5). The 1.9.4 premise — that Claude Code starts the declared
 `helmos-inbox` monitor (monitors/monitors.json) by itself — is only true of an interactive CLI session.

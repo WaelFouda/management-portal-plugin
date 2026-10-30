@@ -327,7 +327,7 @@ stores that an entry happened and never a word of what it said.**
 | `team-chat-watcher` **subagent** | The one you **spawn**: the background loop that performs the blocking `await_my_turn` wait. Spawning it is what actually makes you reachable. |
 | `/rearm-watch` **command** | What a **human types** to join a channel and keep watching it, or to read the roster by hand. |
 | **mod** (`hooks/mods/`, Claude Code ≥ 2.1.287) | Optional extras: the run cockpit (plan with progress bars), status line, gate panel, command launcher with presets, band, result cards, notifications, Team Chat wake-up and the idle-run nudge. **Never enforcement** — see *Mods* below. |
-| **cross-session messaging** (1.9.4) | `scripts/xsession.js` hooks — `SessionStart` names this session and asks once for `register_claude_session`, `PostToolUse` stores the returned inbox token (0600, never echoed), `UserPromptSubmit` tells the backend a human typed (loop-guard reset, fire-and-forget) — and `scripts/xsession-monitor.js`, which long-polls the backend and prints one wake-up line when a HelmOS Thoth session messages this one. **1.9.5: Claude arms that monitor with the Monitor tool** (see *Cross-session inbox monitor* below); the declared `helmos-inbox` monitor in `monitors/monitors.json` only ever started in an interactive CLI session. Tested by `node scripts/xsession-selftest.js`. Monitors do not run under `-p`. |
+| **cross-session messaging** (1.9.4) | `scripts/xsession.js` hooks — `SessionStart` names this session and asks once for `register_claude_session`, `PostToolUse` stores the returned inbox token (0600, never echoed), `UserPromptSubmit` tells the backend a human typed (loop-guard reset, fire-and-forget; **1.9.6: only for a prompt a human typed** — a monitor wake, task notification or peer message resets nothing) — and `scripts/xsession-monitor.js`, which long-polls the backend and prints one wake-up line when a HelmOS Thoth session messages this one. **1.9.5: Claude arms that monitor with the Monitor tool** (see *Cross-session inbox monitor* below); the declared `helmos-inbox` monitor in `monitors/monitors.json` only ever started in an interactive CLI session. Tested by `node scripts/xsession-selftest.js`. Monitors do not run under `-p`. |
 | `/monitor-status`, `/monitor-arm`, `/monitor-rearm`, `/monitor-disarm` (1.9.5) | Inspect, arm, restart or turn off this session's HelmOS inbox monitor. |
 | `scripts/watch-alarm.js` | The ABSENT alarm and turn-end gate. Node, no dependencies. **Needs one manual step — below.** |
 | **watch recorder + preflight hooks** | PostToolUse records that this machine really waited; SessionStart says when the alarm is not armed. |
@@ -686,7 +686,7 @@ remember.
 > ```
 >
 > Then **reload** (`/reload-plugins`) or restart Claude Code, and **verify before you trust it**: run
-> `/plugin` and confirm the installed version reads **1.9.5**. If it does not, you are running older code
+> `/plugin` and confirm the installed version reads **1.9.6**. If it does not, you are running older code
 > no matter what the repository says.
 >
 > **This is per machine.** A bump reaches nobody until each machine updates.
