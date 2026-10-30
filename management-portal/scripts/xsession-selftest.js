@@ -231,6 +231,7 @@ async function caseHumanReset() {
   const data = tmpData();
   fs.mkdirSync(path.join(data, 'xsession'), { recursive: true });
   fs.writeFileSync(path.join(data, 'xsession', SID + '.token'), TOKEN);
+  liveLock(data); // a live monitor, so this prompt owes no arming reminder (proved in caseHookNudges)
   const before = seen.length;
   const t0 = Date.now();
   const r = hook('prompt', { session_id: SID, prompt: 'hi', hook_event_name: 'UserPromptSubmit' },
@@ -313,9 +314,277 @@ async function caseMonitorLoop() {
   check('it did not spin (' + calls + ' accepted polls in ~10 s)', calls < 12, calls);
 }
 
+// ---------------------------------------------------------------------------
+// 1.9.5: arming — the lock, the disarm flag, the /monitor-* commands, the hook nudges
+// ---------------------------------------------------------------------------
+
+const DEAD = 'http://127.0.0.1:9'; // nothing listens: a monitor only backs off, never reaches a backend
+const wait = (ms) => new Promise((z) => setTimeout(z, ms));
+const xdir = (data) => path.join(data, 'xsession');
+const lockOf = (data) => X.readJson(path.join(xdir(data), SID + '.monitor'));
+
+/** A lock held by THIS process — running, with a fresh heartbeat — unless told otherwise. */
+function liveLock(data, pid, t) {
+  fs.mkdirSync(xdir(data), { recursive: true });
+  fs.writeFileSync(path.join(xdir(data), SID + '.monitor'), JSON.stringify({ pid: pid || process.pid, t: t || Date.now(), via: 'selftest' }));
+}
+
+function registered(data) {
+  fs.mkdirSync(xdir(data), { recursive: true });
+  fs.writeFileSync(path.join(xdir(data), SID + '.json'), JSON.stringify({ session_id: SID, name: 'Client Management Platform',
+    cwd: process.cwd(), pid: 31337, t: Date.now() }));
+  fs.writeFileSync(path.join(xdir(data), SID + '.token'), TOKEN);
+}
+
+/** A real monitor process with an explicit session id and a dead backend. */
+function startMonitor(data, sid) {
+  const child = spawn(process.execPath, [MONITOR, data].concat(sid === null ? [] : [sid || SID]), {
+    env: Object.assign({}, process.env, { CLAUDE_PID: String(process.pid), CLAUDE_CODE_SESSION_ID: '',
+      HELMOS_XSESSION_BASE: DEAD, CLAUDE_PLUGIN_DATA: '' }),
+    stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+  });
+  child.out = ''; child.err = ''; child.code = undefined;
+  child.stdout.on('data', (c) => { child.out += c; });
+  child.stderr.on('data', (c) => { child.err += c; });
+  child.on('exit', (code) => { child.code = code; });
+  return child;
+}
+
+async function until(cond, ms) {
+  for (let i = 0; i < (ms || 5000) / 100; i++) { if (cond()) return true; await wait(100); }
+  return cond();
+}
+
+/** The real xsession.js CLI, for one isolated data directory. */
+function cli(mode, data, extra) {
+  const r = spawnSync(process.execPath, [HOOK, mode].concat(extra || []), {
+    encoding: 'utf8', timeout: 20000,
+    env: Object.assign({}, process.env, { CLAUDE_PLUGIN_DATA: data, CLAUDE_CODE_SESSION_ID: SID, CLAUDE_PID: '' }),
+  });
+  return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
+}
+
+async function caseMonitorLock() {
+  console.log('\nmonitor: one per session, lock + heartbeat, disarm');
+  const data = tmpData();
+  registered(data);
+  // No token: the loop then turns every 3 s (waiting for one), which is when it re-checks the flag
+  // and the lock — so these cases need no backend at all.
+  fs.unlinkSync(path.join(xdir(data), SID + '.token'));
+
+  const a = startMonitor(data);
+  await until(() => lockOf(data) && Number(lockOf(data).pid) === a.pid);
+  const l = lockOf(data) || {};
+  check('a monitor takes the lock <sid>.monitor = {pid, t, via}', Number(l.pid) === a.pid && l.via === 'argument'
+    && Math.abs(Date.now() - Number(l.t)) < 10000, JSON.stringify(l) + ' ' + a.err);
+  check('…and reads as LIVE', X.monitorState(xdir(data), SID).live === true);
+
+  const b = startMonitor(data);
+  await until(() => b.code !== undefined, 8000);
+  check('a second copy for the same session exits at once, code 0', b.code === 0, b.code + ' ' + b.err);
+  check('  …printing nothing on stdout', b.out === '', b.out);
+  check('  …saying why on stderr', /already watches session/.test(b.err), b.err);
+  check('  …and leaving the first one\'s lock alone', Number((lockOf(data) || {}).pid) === a.pid);
+
+  // Stale and dead locks are not live, and a new monitor takes them over.
+  liveLock(data, process.pid, Date.now() - X.LOCK_FRESH_MS - 1000);
+  check('a lock with a heartbeat older than 90 s is not live, even with a running pid', X.monitorState(xdir(data), SID).live === false);
+  liveLock(data, b.pid, Date.now());
+  check('a fresh lock whose pid has exited is not live', X.monitorState(xdir(data), SID).live === false);
+  const c = startMonitor(data);
+  await until(() => Number((lockOf(data) || {}).pid) === c.pid);
+  check('a new monitor takes over a dead pid\'s lock', Number((lockOf(data) || {}).pid) === c.pid, JSON.stringify(lockOf(data)) + c.err);
+
+  // The heartbeat runs while it waits for a token (none here), and so does the takeover check.
+  liveLock(data, process.pid, Date.now()); // someone else, live and fresh, holds it now
+  await until(() => c.code !== undefined, 8000);
+  check('a monitor whose session was taken over by a live one exits 0', c.code === 0, c.code + ' ' + c.err);
+  check('  …without removing the lock that is no longer its own', Number((lockOf(data) || {}).pid) === process.pid);
+  try { a.kill(); } catch (_) { /* */ }
+  await until(() => a.code !== undefined);
+
+  // Disarm: at start, and on the next loop while running.
+  const d2 = tmpData();
+  fs.mkdirSync(xdir(d2), { recursive: true });
+  fs.writeFileSync(path.join(xdir(d2), SID + '.disarmed'), '{}');
+  const e = startMonitor(d2);
+  await until(() => e.code !== undefined, 8000);
+  check('a disarmed session\'s monitor exits 0 at start, silently', e.code === 0 && e.out === '', e.code + ' ' + e.out);
+  check('  …and takes no lock', !lockOf(d2));
+  fs.unlinkSync(path.join(xdir(d2), SID + '.disarmed'));
+  const f = startMonitor(d2);
+  await until(() => lockOf(d2));
+  fs.writeFileSync(path.join(xdir(d2), SID + '.disarmed'), '{}');
+  await until(() => f.code !== undefined, 8000);
+  check('a running monitor sees the disarm flag and exits 0', f.code === 0 && f.out === '', f.code + ' ' + f.err);
+  check('  …removing its own lock on the way out', !lockOf(d2), JSON.stringify(lockOf(d2)));
+  check('no monitor ever printed the token', [a, b, c, e, f].every((p) => !p.out.includes(TOKEN) && !p.err.includes(TOKEN)));
+}
+
+async function caseMonitorCommands() {
+  console.log('\n/monitor-status, /monitor-arm, /monitor-rearm, /monitor-disarm');
+  const data = tmpData();
+  let s = cli('monitor-status', data);
+  check('status with no record says so and exits 0', s.code === 0 && /No HelmOS cross-session record/.test(s.stdout), s.stdout + s.stderr);
+
+  registered(data);
+  s = cli('monitor-status', data);
+  check('status: names the session', s.stdout.includes('"Client Management Platform" (session ' + SID + ')'), s.stdout);
+  check('  …registered: yes', /registered: yes/.test(s.stdout), s.stdout);
+  check('  …monitor: not running', /monitor:\s+not running/.test(s.stdout), s.stdout);
+  check('  …disarmed: no', /disarmed:\s+no/.test(s.stdout), s.stdout);
+  check('  …and NEVER the token', !s.stdout.includes(TOKEN) && !s.stderr.includes(TOKEN));
+
+  const arm = cli('monitor-arm', data);
+  const cmd = 'node "' + X.monitorCommand(data, SID).split('"')[1] + '"';
+  check('arm prints the exact Monitor call', arm.stdout.includes('command: ' + X.monitorCommand(data, SID))
+    && arm.stdout.includes('description: "' + X.MONITOR_DESCRIPTION + '"') && /timeout_ms: 1800000/.test(arm.stdout), arm.stdout);
+  check('  …whose command runs xsession-monitor.js with the data dir and this session id',
+    /xsession-monitor\.js" ".+" "/.test(X.monitorCommand(data, SID)) && X.monitorCommand(data, SID).endsWith('"' + SID + '"') && cmd.length > 10);
+  check('  …and says to re-arm when it ends', /arm it again/.test(arm.stdout), arm.stdout);
+
+  const m = startMonitor(data);
+  await until(() => X.monitorState(xdir(data), SID).live);
+  s = cli('monitor-status', data);
+  check('status: live — pid and heartbeat age', s.stdout.includes('live — pid ' + m.pid + ', heartbeat'), s.stdout);
+  const again = cli('monitor-arm', data);
+  check('arm with a live monitor says "Already armed" and prints no call', /Already armed/.test(again.stdout)
+    && !/command: node/.test(again.stdout), again.stdout);
+
+  const dis = cli('monitor-disarm', data);
+  await until(() => m.code !== undefined || !X.pidAlive(m.pid), 5000);
+  check('disarm stops the live monitor process', !X.pidAlive(m.pid), dis.stdout);
+  check('  …writes the disarm flag and removes the lock', fs.existsSync(path.join(xdir(data), SID + '.disarmed')) && !lockOf(data));
+  check('  …and tells Claude to TaskStop its Monitor task too', /TaskStop/.test(dis.stdout), dis.stdout);
+  s = cli('monitor-status', data);
+  check('status: disarmed: yes', /disarmed:\s+yes/.test(s.stdout), s.stdout);
+
+  const re = cli('monitor-arm', data);
+  check('arm clears the disarm flag', !fs.existsSync(path.join(xdir(data), SID + '.disarmed')) && /command: node/.test(re.stdout), re.stdout);
+
+  const m2 = startMonitor(data);
+  await until(() => X.monitorState(xdir(data), SID).live);
+  const rr = cli('monitor-rearm', data);
+  await until(() => !X.pidAlive(m2.pid), 5000);
+  check('rearm stops the live monitor', !X.pidAlive(m2.pid) && rr.stdout.includes('Stopped the inbox monitor') && rr.stdout.includes('(pid ' + m2.pid + ')'), rr.stdout);
+  check('  …removes its lock and prints the Monitor call', !lockOf(data) && rr.stdout.includes('command: ' + X.monitorCommand(data, SID)), rr.stdout);
+  check('no command ever printed the token', [arm, again, dis, re, rr].every((r) => !r.stdout.includes(TOKEN) && !r.stderr.includes(TOKEN)));
+
+  // A stale lock's pid is NEVER killed — it may belong to an unrelated process by now.
+  liveLock(data, process.pid, Date.now() - X.LOCK_FRESH_MS - 1000);
+  const rs = cli('monitor-rearm', data);
+  check('rearm over a STALE lock kills nothing (this process survives) and clears the lock', /No live inbox monitor/.test(rs.stdout) && !lockOf(data), rs.stdout);
+
+  // Explicit session id argument, and the Bash-side data-dir derivation from an installed layout.
+  s = cli('monitor-status', data, [SID]);
+  check('an explicit session id argument resolves', s.stdout.includes('(session ' + SID + ')'), s.stdout);
+  const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'xsession-cfg-'));
+  const root = path.join(cfg, 'plugins', 'cache', 'portal', 'management-portal', '9.9.9');
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.copyFileSync(HOOK, path.join(root, 'scripts', 'xsession.js'));
+  const realData = path.join(cfg, 'plugins', 'data', 'management-portal-portal');
+  registered(realData);
+  const d = spawnSync(process.execPath, [path.join(root, 'scripts', 'xsession.js'), 'monitor-arm'], { encoding: 'utf8', timeout: 20000,
+    env: Object.assign({}, process.env, { CLAUDE_PLUGIN_DATA: '', CLAUDE_CONFIG_DIR: cfg, CLAUDE_CODE_SESSION_ID: SID, CLAUDE_PID: '' }) });
+  const want = path.resolve(realData).replace(/\\/g, process.platform === 'win32' ? '/' : '\\');
+  check('without CLAUDE_PLUGIN_DATA (a Bash shell), cache/<mkt>/<plugin>/<ver> finds data/<plugin>-<mkt>',
+    (d.stdout || '').includes('" "' + want + '" "' + SID + '"'), (d.stdout || '') + (d.stderr || ''));
+}
+
+async function caseHookNudges() {
+  console.log('\nhooks ask for the monitor — and stop asking');
+  const ctxOf = (r) => { try { return JSON.parse(r.stdout).hookSpecificOutput.additionalContext || ''; } catch (_) { return ''; } };
+  const nudge = (data) => X.readJson(path.join(xdir(data), SID + '.nudge')) || {};
+  const setNudge = (data, kind, agoMs) => fs.writeFileSync(path.join(xdir(data), SID + '.nudge'), JSON.stringify(Object.assign(nudge(data), { [kind]: Date.now() - agoMs })));
+  const call = (data) => X.monitorCommand(data, SID);
+  const env = (data) => ({ CLAUDE_PLUGIN_DATA: data, HELMOS_XSESSION_BASE: DEAD });
+
+  // SessionStart
+  let data = tmpData();
+  let r = hook('session-start', { session_id: SID, source: 'startup', cwd: 'D:\\work\\cmp' }, Object.assign(env(data), { HELMOS_XSESSION_AGENTS_JSON: FAKE_AGENTS }));
+  check('SessionStart asks to arm the monitor with the exact call', ctxOf(r).includes(call(data)) && /timeout_ms 1800000/.test(ctxOf(r)), ctxOf(r));
+  check('  …still asks to register first', /register_claude_session\(/.test(ctxOf(r)));
+  liveLock(data);
+  r = hook('session-start', { session_id: SID, source: 'startup', cwd: 'D:\\work\\cmp' }, Object.assign(env(data), { HELMOS_XSESSION_AGENTS_JSON: FAKE_AGENTS }));
+  check('…but not while a monitor is live', !/Monitor tool/.test(ctxOf(r)) && /register_claude_session/.test(ctxOf(r)), ctxOf(r));
+  fs.unlinkSync(path.join(xdir(data), SID + '.monitor'));
+  fs.writeFileSync(path.join(xdir(data), SID + '.disarmed'), '{}');
+  r = hook('session-start', { session_id: SID, source: 'startup', cwd: 'D:\\work\\cmp' }, Object.assign(env(data), { HELMOS_XSESSION_AGENTS_JSON: FAKE_AGENTS }));
+  check('…nor while disarmed', !/Monitor tool/.test(ctxOf(r)), ctxOf(r));
+  data = tmpData(); registered(data);
+  r = hook('session-start', { session_id: SID, source: 'compact', cwd: 'D:\\work\\cmp' }, Object.assign(env(data), { HELMOS_XSESSION_AGENTS_JSON: FAKE_AGENTS }));
+  check('after a compaction with no live monitor it asks to arm, not to register', ctxOf(r).includes(call(data)) && !/register_claude_session\(/.test(ctxOf(r)), ctxOf(r));
+  liveLock(data);
+  r = hook('session-start', { session_id: SID, source: 'compact', cwd: 'D:\\work\\cmp' }, Object.assign(env(data), { HELMOS_XSESSION_AGENTS_JSON: FAKE_AGENTS }));
+  check('…and a compaction with a live monitor stays silent', r.code === 0 && r.stdout === '', r.stdout);
+
+  // PostToolUse token capture
+  data = tmpData();
+  const reg = (d) => hook('post', { session_id: SID, tool_name: 'mcp__management-portal__register_claude_session',
+    tool_input: { cc_session_id: SID }, tool_response: 'inbox_token: ' + TOKEN }, env(d));
+  r = reg(data);
+  check('token capture with no live monitor says to arm one NOW, with the exact call', /arm one now/.test(ctxOf(r)) && ctxOf(r).includes(call(data)), ctxOf(r));
+  check('  …and never echoes the token', !r.stdout.includes(TOKEN) && !r.stderr.includes(TOKEN));
+  liveLock(data);
+  check('…not when one is live', !/Monitor tool/.test(ctxOf(reg(data))));
+  fs.writeFileSync(path.join(xdir(data), SID + '.disarmed'), '{}');
+  fs.unlinkSync(path.join(xdir(data), SID + '.monitor'));
+  r = reg(data);
+  check('…and says "disarmed" instead when it is', /disarmed/.test(ctxOf(r)) && !/Monitor tool/.test(ctxOf(r)), ctxOf(r));
+
+  // UserPromptSubmit: at most once per 10 minutes
+  data = tmpData(); registered(data);
+  r = hook('prompt', { session_id: SID, prompt: 'hi' }, env(data));
+  check('a prompt with no live monitor reminds once, with the exact call', ctxOf(r).includes(call(data)), r.stdout);
+  r = hook('prompt', { session_id: SID, prompt: 'hi' }, env(data));
+  check('…and not again on the next prompt', r.code === 0 && r.stdout === '', r.stdout);
+  setNudge(data, 'prompt', 9 * 60 * 1000);
+  check('…nor 9 minutes later', hook('prompt', { session_id: SID, prompt: 'hi' }, env(data)).stdout === '');
+  setNudge(data, 'prompt', X.PROMPT_NUDGE_MS + 1000);
+  check('…but again after 10 minutes', ctxOf(hook('prompt', { session_id: SID, prompt: 'hi' }, env(data))).includes(call(data)));
+  setNudge(data, 'prompt', X.PROMPT_NUDGE_MS + 1000);
+  liveLock(data);
+  check('no reminder while a monitor is live', hook('prompt', { session_id: SID, prompt: 'hi' }, env(data)).stdout === '');
+  fs.unlinkSync(path.join(xdir(data), SID + '.monitor'));
+  fs.writeFileSync(path.join(xdir(data), SID + '.disarmed'), '{}');
+  check('no reminder while disarmed', hook('prompt', { session_id: SID, prompt: 'hi' }, env(data)).stdout === '');
+  const unreg = tmpData();
+  check('no reminder for an unregistered session', hook('prompt', { session_id: SID, prompt: 'hi' }, env(unreg)).stdout === '');
+
+  // Stop: block once, never twice in a row
+  const stop = (d, active) => hook('stop', { session_id: SID, hook_event_name: 'Stop', stop_hook_active: Boolean(active) }, env(d));
+  const blockOf = (res) => { try { const j = JSON.parse(res.stdout); return j.decision === 'block' ? j.reason : null; } catch (_) { return null; } };
+  data = tmpData(); registered(data);
+  r = stop(data, true);
+  check('Stop with stop_hook_active never blocks', r.code === 0 && r.stdout === '', r.stdout);
+  check('  …and does not spend the 30-minute allowance', !nudge(data).stop);
+  r = stop(data, false);
+  check('Stop blocks a registered session with no live monitor', Boolean(blockOf(r)), r.stdout);
+  check('  …naming the exact Monitor call', (blockOf(r) || '').includes(call(data)) && /timeout_ms 1800000/.test(blockOf(r) || ''), blockOf(r));
+  check('  …and never the token', !r.stdout.includes(TOKEN) && !r.stderr.includes(TOKEN));
+  r = stop(data, true);
+  check('the continuation (stop_hook_active) is not blocked again', r.stdout === '', r.stdout);
+  r = stop(data, false);
+  check('…nor the next turn end within 30 minutes', r.stdout === '', r.stdout);
+  setNudge(data, 'stop', X.STOP_NUDGE_MS + 1000);
+  check('after 30 minutes (the Monitor expiry) it blocks again — the re-arm', Boolean(blockOf(stop(data, false))));
+  setNudge(data, 'stop', X.STOP_NUDGE_MS + 1000);
+  liveLock(data);
+  check('no block while a monitor is live', stop(data, false).stdout === '');
+  fs.unlinkSync(path.join(xdir(data), SID + '.monitor'));
+  fs.writeFileSync(path.join(xdir(data), SID + '.disarmed'), '{}');
+  check('no block while disarmed', stop(data, false).stdout === '');
+  check('no block for an unregistered session', stop(tmpData(), false).stdout === '');
+  check('a malformed Stop payload exits 0 silently', (() => { const b = hook('stop', 'garbage', env(data)); return b.code === 0 && b.stdout === ''; })());
+  const ro = tmpData(); registered(ro);
+  fs.mkdirSync(path.join(xdir(ro), SID + '.nudge')); // a nudge that cannot be recorded…
+  check('…and a nudge it cannot record is never made (no endless Stop blocks)', stop(ro, false).stdout === '');
+}
+
 async function main() {
   console.log('xsession selftest — cross-session messaging hooks and monitor');
-  for (const c of [caseNameResolution, caseTokenCapture, caseNotifier, caseBackoff, caseSessionPick, caseHumanReset, caseMonitorLoop]) {
+  for (const c of [caseNameResolution, caseTokenCapture, caseNotifier, caseBackoff, caseSessionPick, caseHumanReset, caseMonitorLoop,
+    caseMonitorLock, caseMonitorCommands, caseHookNudges]) {
     try { await c(); } catch (e) { fail++; console.log('  FAIL  ' + c.name + ' threw: ' + (e && e.stack || e)); }
   }
   console.log('\n' + pass + ' passed, ' + fail + ' failed');

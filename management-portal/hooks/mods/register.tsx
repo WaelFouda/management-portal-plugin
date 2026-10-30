@@ -143,7 +143,9 @@ export const register: Register = (on) => {
       const input = e as unknown as Record<string, unknown>
       const tool = String(e.tool)
       if ((tool === 'Bash' || tool === 'PowerShell') && input.run_in_background === true) bg.set(e.tool_use_id, await $.clock.now())
-      if (tool === 'Monitor') bg.set(e.tool_use_id, await $.clock.now())
+      // Not the HelmOS inbox monitor (1.9.5): it is armed for 30 minutes and re-armed for the whole
+      // session, so counting it as background work would keep the idle nudge silent forever.
+      if (tool === 'Monitor' && !/xsession-monitor\.js/.test(String(input.command || ''))) bg.set(e.tool_use_id, await $.clock.now())
       if (tool === 'Skill' && /portal-continue/.test(String(input.skill || input.command || ''))) await setContinueMode($, true)
     } catch (_) { /* observation only */ }
     return next(e)
@@ -671,6 +673,7 @@ async function settingsBody($: EngineInterface, els: Els, prefs: PortalPrefs): P
   out.push(<Text key="s-srv" dimColor wrap="wrap">{`Portal server: ${server.name || 'none reached yet'} (${server.how})${server.tried.length ? ' · tried ' + server.tried.join(', ') : ''}${server.error ? ' · ' + server.error : ''}`}</Text>)
   out.push(<Text key="s-w" dimColor wrap="truncate-end">{watch ? `Team Chat wake-up: ${watch.agent} on ${watch.channelId.slice(0, 8)}${prefs.watch ? '' : ' (paused)'}${watch.lastError ? ' · ' + watch.lastError : ''}` : 'Team Chat wake-up: no channel watched (it starts when Claude starts watching one)'}</Text>)
   if (watch) out.push(<Button key="unwatch" label="Stop the chat wake-up" onPress={() => { void update($, watchA, () => null); void $.store.delete('watch') }} />)
+  out.push(<Text key="s-x" dimColor wrap="truncate-end">{await inboxLine($)}</Text>)
   out.push(<Text key="s-nh" bold>{`NOTIFICATIONS${notify.lastPollAt ? ' · checked ' + clock(notify.lastPollAt) : ''}`}</Text>)
   if (notify.error) out.push(<Text key="s-ne" color="red">{clip(notify.error, 100)}</Text>)
   if (!notify.items.length) out.push(<Text key="s-n0" dimColor>nothing new</Text>)
@@ -750,6 +753,25 @@ async function dataEnv($: EngineInterface): Promise<Record<string, string>> {
     if (dir && (await $.fs.exists(dir + '/canon'))) return { CLAUDE_PLUGIN_DATA: dir }
   } catch (_) { /* fall through to discovery */ }
   return {}
+}
+
+/**
+ * The HelmOS inbox monitor for this session (1.9.5), read from the files scripts/xsession.js keeps:
+ * <sid>.disarmed, <sid>.token (existence only — never read) and the <sid>.monitor heartbeat. Armed =
+ * a heartbeat under 90 s old, the same freshness the hooks use (the mod cannot probe the pid).
+ */
+async function inboxLine($: EngineInterface): Promise<string> {
+  try {
+    const base = (await dataEnv($)).CLAUDE_PLUGIN_DATA
+    if (!base) return 'HelmOS inbox: unknown (plugin data folder not found)'
+    const x = `${base}/xsession/${await $.session.id()}`
+    if (await $.fs.exists(x + '.disarmed')) return 'HelmOS inbox: disarmed (/monitor-arm re-enables it)'
+    if (!(await $.fs.exists(x + '.token'))) return 'HelmOS inbox: not registered for cross-session messages'
+    let t = 0
+    try { t = Number(JSON.parse(String(await $.fs.read(x + '.monitor'))).t) || 0 } catch (_) { /* no lock */ }
+    const age = t ? Math.round(((await $.clock.now()) - t) / 1000) : -1
+    return age >= 0 && age < 90 ? `HelmOS inbox: armed · heartbeat ${age}s` : 'HelmOS inbox: not armed (/monitor-arm)'
+  } catch (_) { return 'HelmOS inbox: unknown' }
 }
 
 /** One snapshot at a time; a caller that arrives mid-read waits for THAT read. */

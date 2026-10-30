@@ -2,9 +2,26 @@
 /**
  * xsession-monitor.js — wakes this Claude Code session when a HelmOS Thoth session writes to it.
  *
- * Started by Claude Code itself as a plugin MONITOR (monitors/monitors.json), one per session:
+ * One per session, started in one of two ways:
  *
- *   node "${CLAUDE_PLUGIN_ROOT}/scripts/xsession-monitor.js" "${CLAUDE_PLUGIN_DATA}"
+ *   · by Claude, through the Monitor tool, with this session's id as a third argument. The xsession.js
+ *     hooks ask for it, because Claude Code never starts a declared plugin monitor in a desktop-app
+ *     session (measured 2026-10-30, 2.1.309, Windows and Mac). A Monitor run is capped at 30 minutes;
+ *     the Stop hook asks for the next one. An explicit, valid id wins over the steps below.
+ *
+ *       node "<plugin root>/scripts/xsession-monitor.js" "<plugin data>" "<session id>"
+ *
+ *   · by Claude Code itself as the declared plugin MONITOR (monitors/monitors.json) — seen only in an
+ *     interactive CLI session:
+ *
+ *       node "${CLAUDE_PLUGIN_ROOT}/scripts/xsession-monitor.js" "${CLAUDE_PLUGIN_DATA}"
+ *
+ * ONE MONITOR PER SESSION. <session_id>.monitor = {pid, t, via} is the lock and the heartbeat,
+ * rewritten every loop and every 15 s. A copy that finds another running pid holding a lock with a
+ * heartbeat under 90 s old exits 0 without a word on stdout — so where the platform DOES start the
+ * declared monitor, a Claude-armed duplicate ends at once, and the hooks read the lock as "live".
+ * <session_id>.disarmed (/monitor-disarm) ends it quietly, checked at start and on every beat.
+ * The lock is removed on exit, but only while it is still ours.
  *
  * Every stdout line becomes a notification that wakes an idle session, so STDOUT CARRIES ONLY
  * THE WAKE-UP LINE. Diagnostics go to stderr (the monitor's output file, never a notification),
@@ -37,6 +54,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const X = require('./xsession.js');
 
+const HEARTBEAT_MS = 15 * 1000;    // well inside the hooks' 90 s freshness window
 const REMIND_MS = 120 * 1000;      // still pending and unchanged → remind after ~2 minutes
 const REMIND_MAX = 3;              // … at most this many times per unchanged set
 const LATE_REMIND_MS = 30 * 60 * 1000; // then no more often than every 30 minutes
@@ -95,25 +113,43 @@ function parseWait(body) {
   } catch (_) { return { pending: 0, from: [] }; }
 }
 
-/** The session record this monitor belongs to, from the files SessionStart wrote. */
-function pickSession(records, who) {
-  const recs = (records || []).filter((r) => r && X.safeId(r.session_id));
-  const newest = (xs) => xs.sort((a, b) => (Number(b.t) || 0) - (Number(a.t) || 0))[0] || null;
-  if (who.pid) {
-    const byPid = newest(recs.filter((r) => Number(r.pid) === Number(who.pid)));
-    if (byPid) return byPid;
+// The session record this monitor belongs to: X.pickSession (shared with the /monitor-* commands).
+const { pickSession, readRecords } = X;
+
+/** The per-session lock: claim it once, beat it while running, release it only while it is ours. */
+class Lock {
+  constructor(dir, via) { this.dir = dir; this.via = via; this.sid = null; this.other = null; }
+
+  /** false when another LIVE monitor holds this session. */
+  claim(sid) {
+    const st = X.monitorState(this.dir, sid);
+    if (st.live && st.pid !== process.pid) { this.other = st; return false; }
+    this.sid = sid;
+    this.write();
+    return true;
   }
-  if (who.sid) {
-    const bySid = recs.find((r) => r.session_id === who.sid);
-    if (bySid) return bySid;
+
+  /** Refresh the heartbeat; false when another live monitor has taken the session over. */
+  beat() {
+    if (!this.sid) return true;
+    const st = X.monitorState(this.dir, this.sid);
+    if (st.live && st.pid !== process.pid) { this.other = st; this.sid = null; return false; }
+    this.write();
+    return true;
   }
-  // Last resort: a fresh record for this cwd that does not belong to some OTHER live process.
-  if (who.cwd) {
-    const norm = (p) => String(p || '').replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase();
-    return newest(recs.filter((r) => norm(r.cwd) === norm(who.cwd) && (Number(r.t) || 0) >= (who.since || 0)
-      && (!r.pid || !who.pid || Number(r.pid) === Number(who.pid))));
+
+  write() {
+    try { X.writeAtomic(X.lockFile(this.dir, this.sid), JSON.stringify({ pid: process.pid, t: Date.now(), via: this.via })); }
+    catch (_) { /* unwritable: we still watch; the hooks just cannot see us */ }
   }
-  return null;
+
+  release() {
+    if (!this.sid) return;
+    const f = X.lockFile(this.dir, this.sid);
+    const cur = X.readJson(f);
+    if (cur && Number(cur.pid) === process.pid) { try { fs.unlinkSync(f); } catch (_) { /* gone */ } }
+    this.sid = null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -161,9 +197,10 @@ function ancestorIn(table, start, wanted) {
   return null;
 }
 
-function whoAmI() {
+function whoAmI(explicitSid) {
   const who = { pid: Number(process.env.CLAUDE_PID) || null, sid: X.safeId(process.env.CLAUDE_CODE_SESSION_ID),
-    cwd: process.cwd(), since: Date.now() - 10 * 60 * 1000, how: null };
+    cwd: process.cwd(), since: Date.now() - 10 * 60 * 1000, how: null, explicit: X.safeId(explicitSid) };
+  if (who.explicit) { who.sid = who.explicit; who.how = 'argument'; return who; }
   if (who.pid) { who.how = 'CLAUDE_PID'; return who; }
   if (who.sid) { who.how = 'CLAUDE_CODE_SESSION_ID'; return who; }
   const agents = X.listAgents(8000);
@@ -176,23 +213,26 @@ function whoAmI() {
   return who;
 }
 
-function alive(pid) {
-  if (!pid) return true;
-  try { process.kill(pid, 0); return true; } catch (e) { return e && e.code === 'EPERM'; }
-}
-
-function readRecords(dir) {
-  try {
-    return fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => X.readJson(path.join(dir, f))).filter(Boolean);
-  } catch (_) { return []; }
-}
+function alive(pid) { return !pid || X.pidAlive(pid); }
 
 async function main() {
   const dir = X.dataDir(process.argv[2] || process.env.CLAUDE_PLUGIN_DATA);
   if (!dir) { log('no data directory given; exiting'); return; }
   const origin = X.backendOrigin(path.join(__dirname, '..'));
-  const who = whoAmI();
-  log('owner resolved by ' + who.how + (who.pid ? ' (pid ' + who.pid + ')' : ''));
+  const who = whoAmI(process.argv[3]);
+  log('owner resolved by ' + who.how + (who.pid ? ' (pid ' + who.pid + ')' : '') + (who.explicit ? ' (session ' + who.explicit + ')' : ''));
+
+  const lock = new Lock(dir, who.how);
+  const bye = (why) => { log(why + '; exiting'); lock.release(); process.exit(0); };
+  process.on('exit', () => lock.release());
+  for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) { try { process.on(sig, () => bye('got ' + sig)); } catch (_) { /* */ } }
+  // The heartbeat also runs while a long-poll or a backoff sleep holds the loop (up to ~60 s).
+  const hb = setInterval(() => {
+    if (!lock.sid) return;
+    if (X.isDisarmed(dir, lock.sid)) bye('disarmed for session ' + lock.sid);
+    else if (!lock.beat()) bye('another monitor (pid ' + lock.other.pid + ') took this session over');
+  }, HEARTBEAT_MS);
+  if (hb.unref) hb.unref();
 
   const notifier = new Notifier();
   const backoff = new Backoff(5000, 60000);
@@ -203,10 +243,21 @@ async function main() {
   for (;;) {
     if (who.pid && !alive(who.pid)) { log('owning claude process is gone; exiting'); return; }
 
-    const rec = pickSession(readRecords(dir), who);
-    const nextSid = rec ? rec.session_id : null;
-    if (nextSid !== sid) { sid = nextSid; token = null; rejected = null; notifier.onResult({ pending: 0 }, Date.now(), sid); if (sid) log('watching session ' + sid); }
+    const rec = who.explicit ? null : pickSession(readRecords(dir), who);
+    const nextSid = who.explicit || (rec ? rec.session_id : null);
+    if (nextSid !== sid) {
+      lock.release();
+      sid = nextSid; token = null; rejected = null; notifier.onResult({ pending: 0 }, Date.now(), sid);
+      if (sid && X.isDisarmed(dir, sid)) return bye('disarmed for session ' + sid);
+      if (sid && !lock.claim(sid)) {
+        return bye('another monitor (pid ' + lock.other.pid + ', heartbeat ' + Math.round(lock.other.age / 1000)
+          + ' s ago) already watches session ' + sid);
+      }
+      if (sid) log('watching session ' + sid);
+    }
     if (!sid) { await sleep(TOKEN_POLL_MS); continue; }
+    if (X.isDisarmed(dir, sid)) return bye('disarmed for session ' + sid);
+    if (!lock.beat()) return bye('another monitor (pid ' + lock.other.pid + ') took this session over');
 
     const fileTok = X.readToken(dir, sid);
     if (!fileTok || fileTok === rejected) { token = null; await sleep(TOKEN_POLL_MS); continue; }

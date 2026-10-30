@@ -659,7 +659,7 @@ function caseLifecycle() {
   const d = cli(['doctor']);
   check('doctor reports the home and the run', /CANON_HOME/.test(d.stdout || '') && /state RUN/.test(d.stdout || ''), d.stdout);
   check('doctor lists armed gates', /ARMED\s+CANON-ID/.test(d.stdout || ''));
-  check('doctor reports the tool count', /portal tools\s+:\s+276 known/.test(d.stdout || ''), (d.stdout || '').split('\n').find((x) => /portal tools/.test(x)));
+  check('doctor reports the tool count', /portal tools\s+:\s+277 known/.test(d.stdout || ''), (d.stdout || '').split('\n').find((x) => /portal tools/.test(x)));
   const c = cli(['run-close']);
   check('run-close closes the run', /closed/.test(c.stdout || ''), c.stdout);
   const d2 = cli(['doctor']);
@@ -684,7 +684,7 @@ function caseTools() {
   fresh();
   const t = cli(['tools']);
   const names = (t.stdout || '').trim().split('\n');
-  check('tools lists 276 portal tools', names.length === 276, 'got ' + names.length);
+  check('tools lists 277 portal tools', names.length === 277, 'got ' + names.length);
   check('bulk is in the list', names.includes('bulk'));
   check('create_project is in the list', names.includes('create_project'));
   check('a foreign tool is not', !names.includes('write_file'));
@@ -3148,13 +3148,14 @@ function caseKgRunControlsReadBack() {
 function caseXsessionPlumbing() {
   console.log('\n1.9.4 cross-session messaging is plumbing — never refused, never owes a read-back');
   const G = require('./canon-gate.js');
-  const XS = ['register_claude_session', 'check_session_inbox', 'message_thoth_session', 'list_thoth_sessions', 'reset_session_link'];
+  const XS = ['register_claude_session', 'check_session_inbox', 'message_thoth_session', 'list_thoth_sessions', 'reset_session_link',
+    'session_mail_heartbeat'];
   for (const t of XS) {
     check(t + ' is a portal tool', G.PORTAL_TOOLS.has(t) && G.isPortalTool(t));
     check('  …and is NOT classed as a portal write', !G.isPortalWrite(t));
     check('  …and has no read-back row (none could prove it)', !Object.prototype.hasOwnProperty.call(G.WRITE_READ_MAP, t));
   }
-  check('XSESSION_TOOLS is exactly the five', G.XSESSION_TOOLS.size === 5 && XS.every((t) => G.XSESSION_TOOLS.has(t)));
+  check('XSESSION_TOOLS is exactly the six', G.XSESSION_TOOLS.size === 6 && XS.every((t) => G.XSESSION_TOOLS.has(t)));
 
   // This session's OWN id comes from the SessionStart hook, never from a portal read.
   const OWN = 'dddddddd-4444-4444-8444-dddddddddddd';
@@ -3169,6 +3170,7 @@ function caseXsessionPlumbing() {
     message_thoth_session: { name: 'Planner', message: 'done — see task ' + UUID_C, from_session: 'Client Management Platform' },
     list_thoth_sessions: { query: 'Plan' },
     reset_session_link: { cc_session_id: OWN },
+    session_mail_heartbeat: { cc_session_id: OWN },
   };
   for (const t of XS) {
     const d = denialOf(gate('pre', pre(sid, MCP + t, calls[t])));
@@ -3215,6 +3217,64 @@ function caseXsessionPlumbing() {
   check('the inbox token is never written to the canon ledger', leaked.length === 0, leaked.join(', '));
 }
 
+function caseXsessionMonitorArming() {
+  console.log('\n1.9.5 arming the HelmOS inbox monitor is plumbing — and its Stop block is the only one');
+  const G = require('./canon-gate.js');
+  const X = require('./xsession.js');
+  const ROOT = path.join(__dirname, '..').replace(/\\/g, '/');
+  const OWN = 'dddddddd-4444-4444-8444-dddddddddddd';
+  const arms = [
+    ['Bash', { command: 'node "' + ROOT + '/scripts/xsession.js" monitor-arm' }, 'Bash: xsession.js monitor-arm'],
+    ['Bash', { command: 'node "' + ROOT + '/scripts/xsession.js" monitor-rearm' }, 'Bash: xsession.js monitor-rearm'],
+    ['Bash', { command: 'node "' + ROOT + '/scripts/xsession.js" monitor-disarm 2>&1' }, 'Bash: xsession.js monitor-disarm 2>&1'],
+    ['PowerShell', { command: 'node "' + ROOT + '/scripts/xsession.js" monitor-status' }, 'PowerShell: xsession.js monitor-status'],
+    ['Monitor', { command: 'node "' + ROOT + '/scripts/xsession-monitor.js" "C:/x/plugins/data/mp-portal" "' + OWN + '"',
+      description: X.MONITOR_DESCRIPTION, timeout_ms: 1800000 }, 'the Monitor tool arming xsession-monitor.js'],
+  ];
+  for (const [, input, why] of arms) check('xsessionPlumbing: ' + why, G.xsessionPlumbing(input.command));
+  for (const [cmd, why] of [
+    ['node "' + ROOT + '/scripts/xsession.js" monitor-arm && npm install', 'chained with npm install'],
+    ['node "' + ROOT + '/scripts/xsession.js" monitor-status > "' + PROJ + '/s.txt"', 'redirected into a file'],
+    ['node "' + ROOT + '/scripts/xsession.js" session-start', 'a hook mode, not a monitor command'],
+    ['node -e "require(\'fs\').writeFileSync(\'xsession-monitor.js\', 1)"', 'a one-liner naming the file'],
+  ]) check('…but NOT ' + why, !G.xsessionPlumbing(cmd), cmd);
+
+  // Behaviour, in a run whose implementation gates are armed and owed.
+  const sid = fresh();
+  cli(RUN_ARGS);
+  const ctl = denialOf(gate('pre', pre(sid, 'Bash', { command: 'git commit -m "wip"' })));
+  check('(control) a mutating command IS refused here', Boolean(ctl), (ctl || '(ALLOWED)').slice(0, 120));
+  const ctl2 = denialOf(gate('pre', pre(sid, 'Bash', { command: 'node "' + ROOT + '/scripts/xsession.js" monitor-arm && git commit -m "wip"' })));
+  check('(control) …and still is when chained after a monitor command', Boolean(ctl2), (ctl2 || '(ALLOWED)').slice(0, 120));
+  for (const [tool, input, why] of arms) {
+    const d = denialOf(gate('pre', pre(sid, tool, input)));
+    check('not refused: ' + why, d === null, (d || '').slice(0, 160));
+  }
+
+  // Stop: when the xsession Stop hook blocks this turn, canon-gate steps aside (one block per turn).
+  // Each probe is a fresh session owing a read-back, so canon-gate has exactly one block to give.
+  const probe = (files) => {
+    const s2 = fresh();
+    gate('prompt', { session_id: s2, cwd: PROJ, hook_event_name: 'UserPromptSubmit', prompt: 'go' });
+    gate('post', post(s2, MCP + 'create_board', { project_id: UUID_A }, 'Created board [id: ' + UUID_B + ']'));
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-xs-'));
+    fs.mkdirSync(path.join(data, 'xsession'), { recursive: true });
+    for (const [ext, body] of Object.entries(files)) fs.writeFileSync(path.join(data, 'xsession', s2 + ext), body);
+    return gate('stop', stop(s2, false), { CLAUDE_PLUGIN_DATA: data });
+  };
+  const TOK = { '.token': 'tok_SELFTEST_never_real' };
+  const control = blockOf(probe({}));
+  check('(control) canon-gate blocks this turn end when xsession has nothing to ask', Boolean(control), control || '(no block)');
+  const aside = probe(TOK);
+  check('a registered session with no live monitor: canon-gate steps aside for the xsession re-arm block', blockOf(aside) === null, aside.raw.slice(0, 160));
+  check('…also when xsession has just recorded its block (hooks run concurrently)',
+    blockOf(probe(Object.assign({ '.nudge': JSON.stringify({ stop: Date.now() - 5000 }) }, TOK))) === null);
+  check('…but blocks itself once xsession is rate-limited and will not',
+    Boolean(blockOf(probe(Object.assign({ '.nudge': JSON.stringify({ stop: Date.now() - 5 * 60 * 1000 }) }, TOK)))));
+  check('…and when the session is disarmed', Boolean(blockOf(probe(Object.assign({ '.disarmed': '{}' }, TOK)))));
+  check('…and when a monitor is live', Boolean(blockOf(probe(Object.assign({ '.monitor': JSON.stringify({ pid: process.pid, t: Date.now() }) }, TOK)))));
+}
+
 function run() {
   console.log('portal-canon selftest — every gate proved on BOTH sides');
   const cases = [caseSessionStart, caseP1, caseP2, caseP3, caseP3Latch, caseP4, caseP5,
@@ -3229,7 +3289,7 @@ function run() {
     caseKgConsultImplementation, caseKgConsultPhase, caseJournalGraph, caseKgAdvisories,
     caseGapBulkReadsCount, caseGapOverflowStub,
     caseKgBrakesNeverRefused, caseKgEdgeReadBackTakesTheGraphId, caseKgAskIsAConsult, caseKgRunControlsReadBack,
-    caseXsessionPlumbing];
+    caseXsessionPlumbing, caseXsessionMonitorArming];
   for (const c of cases) {
     try { c(); } catch (e) { fail++; failures.push(c.name + ' threw: ' + e.message); console.log('  FAIL  ' + c.name + ' threw: ' + e.message); }
   }

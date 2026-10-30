@@ -179,7 +179,8 @@ const L = require('./canon-lib.js');
 // Count: 257; 263 as of 1.7.8; 271 as of 1.9.2 (generate, check_generation, list_models,
 // read_media, ask_knowledge_graph and the stop_/pause_/resume_knowledge_graph_extraction run
 // controls — re-verified against the backend registry 2026-10-25); 276 as of 1.9.4 (the five
-// cross-session messaging tools — see XSESSION_TOOLS).
+// cross-session messaging tools — see XSESSION_TOOLS); 277 as of 1.9.5 (session_mail_heartbeat,
+// the sixth, registered by the backend alongside them and missing from 1.9.4).
 //
 // Regenerate with:
 //   grep -rhoP '(?<=^\s{8}name=")[a-z0-9_]+(?=")' backend/ai/tools/*.py | sort -u
@@ -270,7 +271,9 @@ const PORTAL_TOOLS = new Set([
   'resume_knowledge_graph_extraction',
   // 1.9.4 — HelmOS cross-session messaging (Thoth chat session <-> Claude Code session).
   'register_claude_session', 'check_session_inbox', 'message_thoth_session',
-  'list_thoth_sessions', 'reset_session_link'
+  'list_thoth_sessions', 'reset_session_link',
+  // 1.9.5 — the sixth, missed in 1.9.4 (backend/ai/tools/session_mail_tools.py).
+  'session_mail_heartbeat'
 ]);
 
 // ---------------------------------------------------------------------------
@@ -532,11 +535,13 @@ const WRITE_PREFIX = /^(create|update|add|delete|remove|set|insert|reorder|compl
  *     obligation with no discharge, the one-way latch this file has paid for seven times.
  *   · The phase and debt gates would refuse a session's REGISTRATION or its REPLY to a teammate
  *     because a project journal is unwritten. Being reachable is not work done on the project.
- * list_thoth_sessions is a plain read and stays one. All five are portal TOOLS, so the ids their
- * replies carry still enter the seen set.
+ * list_thoth_sessions is a plain read and stays one. All six are portal TOOLS, so the ids their
+ * replies carry still enter the seen set. 1.9.5 adds the sixth, session_mail_heartbeat (it marks this
+ * session active, by its own id) — and arming the inbox monitor from Bash or the Monitor tool: see
+ * xsessionPlumbing().
  */
 const XSESSION_TOOLS = new Set(['register_claude_session', 'check_session_inbox', 'message_thoth_session',
-  'list_thoth_sessions', 'reset_session_link']);
+  'list_thoth_sessions', 'reset_session_link', 'session_mail_heartbeat']);
 
 function isPortalWrite(bare) {
   if (!bare) return false;
@@ -680,6 +685,25 @@ const KG_LEARNING = new Set(['interpret_knowledge_graph', 'extract_knowledge_gra
 
 function standDownExempt(cmd) {
   return typeof cmd === 'string' && /canon-gate(\.js)?["']?\s+(stand-down|run-close|doctor|selftest|tools|run-open|run-promote)/.test(cmd);
+}
+
+/**
+ * 1.9.5: ARMING THE HELMOS INBOX MONITOR IS PLUMBING, like the XSESSION_TOOLS it serves. The
+ * SessionStart, PostToolUse, UserPromptSubmit and Stop hooks ask Claude to run the Monitor tool on
+ * xsession-monitor.js, and the /monitor-* commands run `xsession.js monitor-*` from Bash — none of
+ * it is work on the project, so no implementation gate may refuse it or count it (a Stop hook
+ * demanding a call that CANON-TREE-FIRST refuses would be a latch). Exempt only when EVERY segment
+ * of the line is one of those node invocations and nothing is redirected into a file, so
+ * `… && npm install` or `… > src/x.ts` is still judged on its merits.
+ */
+function xsessionPlumbing(cmd) {
+  if (typeof cmd !== 'string') return false;
+  // `2>&1` and `2>/dev/null` write no file, but `&` would split the line into a bogus segment.
+  const c = cmd.replace(/\s[12]?>&[12]\b/g, ' ').replace(/\s[12]?>>?\s*(\/dev\/null|nul)(?=\s|$)/gi, ' ');
+  const segs = L.shellSegments(c, 0);
+  return segs.length > 0 && !L.redirectTargets(c).length && segs.every((s) => s.head === 'node' && (
+    (/(^|[\\/])xsession\.js$/i.test(s.args[0] || '') && /^monitor-(arm|rearm|disarm|status)$/.test(s.args[1] || ''))
+    || /(^|[\\/])xsession-monitor\.js$/i.test(s.args[0] || '')));
 }
 
 // ---------------------------------------------------------------------------
@@ -2081,6 +2105,7 @@ function modePre(payload) {
   // refused by the gate it escapes. A gate that can block its own escape is a trap.
   const shells = L.shellStrings(input);
   if (shells.some((s) => standDownExempt(s))) quiet();
+  if (shells.length && shells.every((s) => xsessionPlumbing(s))) quiet();
 
   const portal = isPortalTool(bare);
 
@@ -2563,6 +2588,19 @@ function watchAlarmBlockedRecently() {
   return false;
 }
 
+/**
+ * 1.9.5: does the xsession Stop hook (the inbox-monitor re-arm) block this turn end? Same reason
+ * as watch-alarm: two blocks on one turn spend the runtime's consecutive-block budget twice as
+ * fast. Stop hooks may run concurrently, so this asks xsession's own predicate — "it just did, or
+ * it will" — rather than waiting for a file the other hook may not have written yet.
+ */
+function xsessionBlocksThisStop(payload) {
+  try {
+    const X = require('./xsession.js');
+    return X.stopBlocks(X.dataDir(), X.safeId(payload && payload.session_id), payload);
+  } catch (_) { return false; }
+}
+
 function modeStop(payload) {
   const key = L.sessionKey(payload);
   const agent = payload.agent_id || null;
@@ -2573,6 +2611,7 @@ function modeStop(payload) {
 
   if (L.canonMode() === 'off') quiet();
   if (watchAlarmBlockedRecently()) quiet();
+  if (xsessionBlocksThisStop(payload)) quiet();
 
   // THE ONE PORTAL READ (§6.6). Rate limited, run-scoped, and strictly optional: on
   // 401/timeout/no-credential we carry on with local ledger evidence, labelled as such.
@@ -3152,7 +3191,7 @@ function main() {
 // own tests could not see the register they exist to police.
 module.exports = { PORTAL_TOOLS, WRITE_READ_MAP, REGISTER, JOURNAL_CLEARING, BOARD_FIRST_GATED,
   CLOSEOUT_CLEARING, OTHER_GATE_KEYS, KG_BRAKES, XSESSION_TOOLS, CARD_CAP, DEBT_BUDGET, KG_LEARNING, KG_CONSULT_READS,
-  fold, isPortalWrite, isPortalTool, isDeleteWrite, buildCard, standDownExempt, evaluateCall,
+  fold, isPortalWrite, isPortalTool, isDeleteWrite, buildCard, standDownExempt, xsessionPlumbing, evaluateCall,
   settleCall, carriedDebt, closeoutMissing, closeoutOwed, kgConsulted, kgAdvisories };
 
 // Only run when invoked directly, so `selftest` can import this module and drive the
