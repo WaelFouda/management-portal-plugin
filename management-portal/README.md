@@ -327,7 +327,8 @@ stores that an entry happened and never a word of what it said.**
 | `team-chat-watcher` **subagent** | The one you **spawn**: the background loop that performs the blocking `await_my_turn` wait. Spawning it is what actually makes you reachable. |
 | `/rearm-watch` **command** | What a **human types** to join a channel and keep watching it, or to read the roster by hand. |
 | **mod** (`hooks/mods/`, Claude Code ≥ 2.1.287) | Optional extras: the run cockpit (plan with progress bars), status line, gate panel, command launcher with presets, band, result cards, notifications, Team Chat wake-up and the idle-run nudge. **Never enforcement** — see *Mods* below. |
-| **cross-session messaging** (1.9.4) | `scripts/xsession.js` hooks — `SessionStart` names this session and asks once for `register_claude_session`, `PostToolUse` stores the returned inbox token (0600, never echoed), `UserPromptSubmit` tells the backend a human typed (loop-guard reset, fire-and-forget) — and the `helmos-inbox` **monitor** (`monitors/monitors.json` → `scripts/xsession-monitor.js`), which long-polls the backend and prints one wake-up line when a HelmOS Thoth session messages this one. Tested by `node scripts/xsession-selftest.js`. Monitors do not run under `-p`. |
+| **cross-session messaging** (1.9.4) | `scripts/xsession.js` hooks — `SessionStart` names this session and asks once for `register_claude_session`, `PostToolUse` stores the returned inbox token (0600, never echoed), `UserPromptSubmit` tells the backend a human typed (loop-guard reset, fire-and-forget) — and `scripts/xsession-monitor.js`, which long-polls the backend and prints one wake-up line when a HelmOS Thoth session messages this one. **1.9.5: Claude arms that monitor with the Monitor tool** (see *Cross-session inbox monitor* below); the declared `helmos-inbox` monitor in `monitors/monitors.json` only ever started in an interactive CLI session. Tested by `node scripts/xsession-selftest.js`. Monitors do not run under `-p`. |
+| `/monitor-status`, `/monitor-arm`, `/monitor-rearm`, `/monitor-disarm` (1.9.5) | Inspect, arm, restart or turn off this session's HelmOS inbox monitor. |
 | `scripts/watch-alarm.js` | The ABSENT alarm and turn-end gate. Node, no dependencies. **Needs one manual step — below.** |
 | **watch recorder + preflight hooks** | PostToolUse records that this machine really waited; SessionStart says when the alarm is not armed. |
 
@@ -517,7 +518,7 @@ are both `management-portal`, the segment is doubled — which looks like a typo
 because `matcher` is a **full** match that pattern was silently **inert** for a claude.ai-connector
 install (`mcp__claude_ai_management-portal__*`) and for a UUID-named install (`mcp__<uuid>__*`), both
 of which are live in the wild. 1.5.0 matches **`.*`** and scopes **at runtime** against a frozen set
-of 257 portal tool names (263 as of 1.7.8, 271 as of 1.9.2) — a tool outside that set is never subject to a portal invariant, so an
+of 257 portal tool names (263 as of 1.7.8, 271 as of 1.9.2, 277 as of 1.9.5) — a tool outside that set is never subject to a portal invariant, so an
 unknown MCP server is ignored rather than gated. **Never enumerate install spellings in a regex
 again**; that is how this broke in the first place. (`watch-alarm.js`'s recorder is the one remaining
 narrow matcher, and it is spelling-agnostic too: `mcp__.*__(await_my_turn|start_watching_channel)`.)
@@ -543,6 +544,45 @@ look identical from inside a conversation, which is the same failure shape as th
   bound to the core loop, the three gates, bottom-up completion, never-fabricate-ids, and board-first.
 - On Team Chat, type **`/rearm-watch`** to join a channel and keep watching it, or with no arguments to
   read the roster and re-arm.
+
+## Cross-session inbox monitor: arming it (1.9.5)
+
+A HelmOS Thoth session can message this session by name. What wakes this session when it does is a monitor
+process, `scripts/xsession-monitor.js`. **1.9.4 assumed Claude Code starts it by itself. In a desktop-app
+session it never does** (measured 2026-10-30 on 2.1.309, Windows and Mac); only an interactive CLI session
+started the declared monitor. So from 1.9.5 Claude starts it with the **Monitor** tool, and the hooks ask:
+
+| when | what the plugin does |
+|---|---|
+| session start | the registration text also gives the exact Monitor call |
+| inbox token stored | "arm one now", with the call, if no monitor is live |
+| you type a prompt | a one-line reminder, at most once every 10 minutes |
+| a turn ends | the Stop hook **blocks once** with the call, at most once every 30 minutes, never on a `stop_hook_active` continuation |
+
+A Monitor run is capped at **30 minutes**. When it expires, the expiry notice wakes the session, the turn
+ends, and the Stop hook asks for the next one. That is the automatic re-arm. Every hook stays silent while
+a monitor is **live** or the session is **disarmed**.
+
+- **Live** means `${CLAUDE_PLUGIN_DATA}/xsession/<session>.monitor` names a running pid whose heartbeat is
+  under 90 seconds old. The monitor rewrites it every loop and every 15 seconds. A second monitor for the
+  same session exits at once with nothing on stdout, so the declared monitor (still in `monitors.json` for
+  the CLI) and a Claude-armed one never both run.
+- **Disarmed** means `<session>.disarmed` exists. The monitor exits when it sees it, and no hook asks.
+
+The commands, each a thin wrapper around `node scripts/xsession.js monitor-*`:
+
+| command | does |
+|---|---|
+| `/management-portal:monitor-status` | registered (yes/no, never the token), monitor live / not running / stale lock, disarmed |
+| `/management-portal:monitor-arm` | clears a disarm; "already armed" if live, else prints the exact Monitor call |
+| `/management-portal:monitor-rearm` | stops a live monitor (Windows and macOS), removes the lock, prints the call |
+| `/management-portal:monitor-disarm` | writes the flag, stops the monitor, removes the lock; also TaskStop the Monitor task |
+
+From Bash, `CLAUDE_PLUGIN_DATA` is not set, so the commands derive it: an installed plugin at
+`<config>/plugins/cache/<marketplace>/<plugin>/<version>` keeps its data at
+`<config>/plugins/data/<plugin>-<marketplace>`, and otherwise every data directory is searched for this
+session's record. The canon gates treat the Monitor call and `xsession.js monitor-*` as plumbing: no
+implementation gate refuses or counts them. Turn everything off with `HELMOS_XSESSION=off`.
 
 ## Team Chat watch: what this plugin gets, and the one manual step
 
@@ -646,7 +686,7 @@ remember.
 > ```
 >
 > Then **reload** (`/reload-plugins`) or restart Claude Code, and **verify before you trust it**: run
-> `/plugin` and confirm the installed version reads **1.9.4**. If it does not, you are running older code
+> `/plugin` and confirm the installed version reads **1.9.5**. If it does not, you are running older code
 > no matter what the repository says.
 >
 > **This is per machine.** A bump reaches nobody until each machine updates.

@@ -22,6 +22,19 @@ server-side by `await_my_turn` really running, and by nothing else — so readin
 page, or running that command, changes nothing on the roster until a watcher is
 actually waiting.
 
+**Not the same thing: `/rearm-watch` vs `/monitor-arm`.** `/rearm-watch` is about a
+**Team Chat channel**: it spawns the `team-chat-watcher` sub-agent so `await_my_turn`
+keeps your roster row present. `/monitor-arm` (and `/monitor-status`, `/monitor-rearm`,
+`/monitor-disarm`) is about **HelmOS cross-session messages** from a Thoth AI-chat
+session: it has you start the inbox monitor (`xsession-monitor.js`) with the **Monitor**
+tool, which wakes this session when mail is waiting. Neither arms the other, and no
+roster shows the inbox monitor. Both share the idle hole below, in a milder form: a
+Monitor run expires after 30 minutes, and the only thing that re-arms it is the Stop
+hook at the end of the turn the expiry notice starts. If that chain breaks — the turn
+ends without arming, the Stop block was already spent in the last 30 minutes, or the
+session process ends — an idle session stays unwoken until something else starts a
+turn. The mail is not lost; `check_session_inbox` still has it.
+
 ## The problem this exists for
 
 `await_my_turn` blocks for **at most 25 seconds** (`timeout_s` defaults to 20). When

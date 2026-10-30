@@ -3,6 +3,60 @@
 Releases before 1.8.0 are described in the commit history (`plugin vX.Y.Z: …`) and in the
 "Known failure modes" section of [`management-portal/README.md`](management-portal/README.md).
 
+## 1.9.5 — 2026-10-30
+
+### Cross-session messaging — Claude arms the inbox monitor, because the platform does not
+
+**Correction to 1.9.4.** 1.9.4 said "the `helmos-inbox` monitor wakes the session". That was only true of an
+interactive CLI session. Measured 2026-10-30 on Claude Code 2.1.309: in a **desktop-app** session (Windows and
+Mac, `claude.exe --output-format stream-json --input-format stream-json --resume=…`) Claude Code never starts
+the plugin's declared monitor. No `xsession-monitor.js` process ever ran, so no Thoth message woke a desktop
+session. Registration and token capture worked. Started by hand with the **Monitor** tool, the same script
+woke the session within seconds. The Monitor tool caps a run at 30 minutes.
+
+- **Claude arms it, and the hooks ask** (`scripts/xsession.js`). The exact call is
+  `Monitor(command: node "<root>/scripts/xsession-monitor.js" "<plugin data>" "<session id>", description:
+  "HelmOS inbox: a Thoth session sent this session a message", timeout_ms: 1800000)`.
+  - `SessionStart` adds it to the registration text (and after a compaction, when no monitor is live).
+  - The token-capture `PostToolUse` says "arm one now" with the call.
+  - `UserPromptSubmit` reminds in one line, at most once every 10 minutes.
+  - A **new `Stop` hook** (`xsession.js stop`) blocks the turn end once with the call — at most once every
+    30 minutes, never on a `stop_hook_active` continuation. That is the re-arm: the expiry notice wakes the
+    session, the turn ends, and the hook asks for the next monitor.
+  - Every one of them stays silent while a monitor is live or the session is disarmed.
+- **One monitor per session** (`scripts/xsession-monitor.js`). An optional third argument names the session
+  and wins over the other ways of finding it. `<sid>.monitor` = `{pid, t, via}` is a lock and a heartbeat,
+  rewritten every loop and every 15 s. A copy that finds a running pid with a heartbeat under 90 s exits 0
+  with nothing on stdout. It is removed on exit only while it is still ours. The declared monitor stays in
+  `monitors.json`, and where the platform does start it, a Claude-armed duplicate ends at once.
+- **Disarm** — `<sid>.disarmed`. The monitor exits on seeing it (at start and on every beat), and no hook asks.
+- **Four commands**: `/monitor-status` (registered yes/no — never the token — live with pid and heartbeat age,
+  stale lock, disarmed), `/monitor-arm` (clears a disarm; "already armed", or the exact Monitor call),
+  `/monitor-rearm` (stops a live monitor on Windows and macOS, removes the lock, prints the call) and
+  `/monitor-disarm` (flag, stop, remove the lock; TaskStop the Monitor task too). From Bash,
+  `CLAUDE_PLUGIN_DATA` is not set, so the commands derive it from the install path
+  (`plugins/cache/<marketplace>/<plugin>/<version>` → `plugins/data/<plugin>-<marketplace>`), then search
+  every data directory for this session's record. Only a monitor with a fresh heartbeat is ever killed.
+- **Canon gates.** The Monitor call and `node …/xsession.js monitor-*` are plumbing (`xsessionPlumbing`), never
+  refused or counted as implementation work, as long as every segment of the line is one of them and nothing
+  is redirected into a file. canon-gate's `Stop` now **steps aside** when the xsession Stop hook blocks the same
+  turn end, as it already did for watch-alarm. The hooks may run concurrently, so it asks xsession's own
+  predicate (`stopBlocks`) instead of waiting for a file. `session_mail_heartbeat`, the sixth cross-session tool
+  the backend registers, joins `PORTAL_TOOLS` (276 → 277) and `XSESSION_TOOLS`.
+- **Mod.** Settings shows `HelmOS inbox: armed · heartbeat Ns` / `not armed` / `disarmed` / `not registered`. An
+  inbox-monitor `Monitor` call no longer counts as background work, so a session that keeps one armed still gets
+  the idle-run nudge.
+- **Docs.** `SKILL.md` rewrites the wake-up section (Claude arms it, 30-minute expiry, Stop re-arm, the
+  commands), corrects `reset_session_link` (it records that a HUMAN typed, resetting the loop guard; a stale link
+  is fixed by registering again), says six tools, and its description now names Thoth, the inbox and the tools
+  so a `HelmOS: …` wake line loads it. `team-chat-reachability` separates `/rearm-watch` from `/monitor-arm`.
+  README and `hooks/README.md` document the arming, the commands and the Stop order (watch-alarm, xsession,
+  canon-gate).
+- **Tests:** `xsession-selftest.js` 73 → 141 (lock live/stale/dead, takeover, disarm at start and while
+  running, the four commands against real monitor processes, data-dir derivation from an installed layout, every
+  hook's nudge and rate limit, Stop once and never on `stop_hook_active`). `canon-selftest.js` adds
+  `caseXsessionMonitorArming` (plumbing both sides, the Stop step-aside).
+
 ## 1.9.4 — 2026-10-29
 
 ### Cross-session messaging — a HelmOS Thoth session and this session message each other by name

@@ -91,7 +91,7 @@ This is not hypothetical. The session that wrote this file had the portal tools 
 have matched. **On that install every read-after-write hook was silently dead.**
 
 **1.5.0 takes the fix.** The `PreToolUse` and `PostToolUse` entries now match **`.*`** and scope at
-**runtime** against a frozen set of **257** portal tool names (**263** as of 1.7.8, **271** as of 1.9.2, **276** as of 1.9.4) — a raw name is portal iff it matches
+**runtime** against a frozen set of **257** portal tool names (**263** as of 1.7.8, **271** as of 1.9.2, **276** as of 1.9.4, **277** as of 1.9.5) — a raw name is portal iff it matches
 `^mcp__.+?__(.+)$` and the tail is in the set, so an unknown MCP server is **ignored rather than
 gated**, keeping Supabase, Desktop Commander, chrome-devtools and playwright out of the blast radius.
 Non-portal tools are judged purely by **argument shape** — does a key carry a shell command line,

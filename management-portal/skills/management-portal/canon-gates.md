@@ -134,7 +134,7 @@ Worth knowing, because it is the reason this whole effort exists:
   match — so it was **inert** for a claude.ai-connector install (`mcp__claude_ai_management-portal__*`)
   and for a UUID-named install (`mcp__<uuid>__*`). Both spellings are live in the wild. **1.5.0 fixes
   this the only way that generalises:** the `PreToolUse` and `PostToolUse` matchers are now `.*`, and
-  the scoping happens **at runtime** against a frozen set of 257 portal tool names (263 as of 1.7.8, 271 as of 1.9.2, 276 as of 1.9.4 — the five cross-session messaging tools, which are portal tools but never portal writes: `XSESSION_TOOLS`). A tool outside
+  the scoping happens **at runtime** against a frozen set of 257 portal tool names (263 as of 1.7.8, 271 as of 1.9.2, 276 as of 1.9.4 — the five cross-session messaging tools, which are portal tools but never portal writes: `XSESSION_TOOLS`; 277 as of 1.9.5 — the sixth, `session_mail_heartbeat`). A tool outside
   that set is never subject to a portal invariant, which is what keeps Supabase, Desktop Commander,
   chrome-devtools and playwright out of the blast radius. **Never enumerate install spellings in a
   regex again** — that is how this broke in the first place.

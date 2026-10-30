@@ -25,9 +25,12 @@ exits before touching the disk for anything that neither writes a file nor runs 
 PostToolUse is deliberately .* — ids legitimately arrive via Read, Grep, Bash and other MCP
 servers, and `bulk` has to be expanded into its inner calls or canon (f) blinds Gate 1.
 
-Stop runs watch-alarm FIRST (it owns Team Chat reachability and is unchanged), then canon-gate,
-which yields silently if watch-alarm blocked this turn. Two gates blocking one turn is how you
-spend the runtime's 9-consecutive-block budget by accident.
+Stop runs watch-alarm FIRST (it owns Team Chat reachability and is unchanged), then xsession `stop`
+(1.9.5, the HelmOS inbox-monitor re-arm), then canon-gate, which yields silently if watch-alarm
+blocked this turn or if xsession blocks it. Two gates blocking one turn is how you spend the
+runtime's 9-consecutive-block budget by accident. Stop hooks may run concurrently, so canon-gate does
+not wait for a file: it asks xsession's own predicate (`stopBlocks` — "it just recorded a block, or it
+is about to") and steps aside on either.
 
 To stand every gate down: node scripts/canon-gate.js stand-down --gate all --reason "..."
 or set PORTAL_CANON=off. See the header of canon-gate.js.
@@ -41,4 +44,24 @@ CROSS-SESSION MESSAGING (1.9.4) adds three command hooks, all routed through scr
 fail-open (any error exits 0 with no output): SessionStart `session-start` (names the session, asks once for
 register_claude_session), UserPromptSubmit `prompt` (fire-and-forget loop-guard reset) and PostToolUse
 `post` on mcp__.*__(register_claude_session|bulk) (stores the inbox token, never echoes it). The wake-up
-itself is not a hook: it is the `helmos-inbox` monitor in monitors/monitors.json.
+itself is not a hook: it is scripts/xsession-monitor.js.
+
+THE MONITOR IS ARMED BY CLAUDE (1.9.5). The 1.9.4 premise — that Claude Code starts the declared
+`helmos-inbox` monitor (monitors/monitors.json) by itself — is only true of an interactive CLI session.
+Measured 2026-10-30 on 2.1.309: in a desktop-app session (Windows and Mac) no monitor process is ever
+started. So the hooks ask Claude to start it with the Monitor tool —
+`node "<root>/scripts/xsession-monitor.js" "<plugin data>" "<session id>"`, timeout_ms 1800000 — and,
+because a Monitor run is capped at 30 minutes, to start it again when it expires:
+  · SessionStart `session-start` adds the exact Monitor call to its registration text;
+  · PostToolUse `post` adds it once the token is stored;
+  · UserPromptSubmit `prompt` adds a one-line reminder, at most once per 10 minutes (<sid>.nudge);
+  · Stop `stop` (new) BLOCKS ONCE with the call — at most once per 30 minutes, never when
+    `stop_hook_active` is set. That is the re-arm: the expiry notice wakes the session, the turn ends,
+    this asks for a new monitor.
+All four stay silent while a monitor is LIVE or the session is DISARMED. Live = <sid>.monitor
+{pid, t, via} names a running pid with a heartbeat under 90 s old; the monitor rewrites it every loop and
+every 15 s, and a second copy for the same session exits 0 at once — so where the platform does start the
+declared monitor (it stays in monitors.json), a Claude-armed duplicate ends immediately and the hooks stay
+quiet. <sid>.disarmed is written by /monitor-disarm; the monitor exits on seeing it. The commands
+/monitor-status, /monitor-arm, /monitor-rearm and /monitor-disarm run `xsession.js monitor-*` from Bash;
+canon-gate treats those lines and the Monitor call as plumbing (xsessionPlumbing).
